@@ -1,13 +1,31 @@
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 import uvicorn
 
+
 from app.api import auth, home
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv(override=False)
+
+
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Stoloto Project")
+
+    origins = os.getenv("CORS_ORIGINS", "").split(",")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in origins if o],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # routers
     app.include_router(auth.router, tags=["Auth"])
