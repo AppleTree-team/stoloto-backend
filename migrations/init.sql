@@ -61,3 +61,34 @@ CREATE TABLE room_members (
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     boost INTEGER DEFAULT 0
 );
+
+
+
+
+
+
+
+
+
+
+
+--Для теста сделаем генирацию пользователей с одним паролем
+-- 100 обычных пользователей
+INSERT INTO users (username, password, balance, is_bot)
+SELECT
+    'user' || i,
+    'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3',
+    10000,
+    FALSE
+FROM generate_series(1, 100) AS i;
+
+
+-- 100 ботов
+INSERT INTO users (username, password, balance, is_bot)
+SELECT
+    'bot' || i,
+    'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3',
+    0,
+    TRUE
+FROM generate_series(1, 100) AS i;
+
