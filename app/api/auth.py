@@ -1,7 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from app.services.auth_service import check_user, create_fake_token
+from app.services.auth_service import login
 
 router = APIRouter()
 
@@ -12,17 +12,20 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/auth/login")
-def login(data: LoginRequest):
-    if not check_user(data.username, data.password):
-        return {
-            "status": "error",
-            "message": "invalid credentials"
-        }
+def login_endpoint(data: LoginRequest, response: Response):
+    result = login(data.username, data.password)
 
-    token = create_fake_token(data.username)
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    response.set_cookie(
+        key="session_id",
+        value=result["token"],
+        httponly=True
+    )
 
     return {
-        "status": "ok",
-        "message": f"welcome {data.username}",
-        "token": token
+        "message": "Login successful",
+        "user_id": result["user_id"],
+        "username": result["username"]
     }

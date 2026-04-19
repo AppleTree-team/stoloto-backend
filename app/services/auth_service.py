@@ -1,16 +1,81 @@
-from typing import Dict
+import hashlib
+from datetime import datetime, timedelta
 
-# временная "база"
-USERS_DB: Dict[str, str] = {
-    "admin": "1234",
-    "test": "1111"
-}
+from jose import jwt, JWTError
 
-
-def check_user(username: str, password: str) -> bool:
-    return USERS_DB.get(username) == password
+from app.db.db import fetch
 
 
-def create_fake_token(username: str) -> str:
-    # заглушка вместо JWT
-    return f"token_{username}"
+# --------------------
+# CONFIG
+# --------------------
+SECRET_KEY = "super-secret-key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_HOURS = 24
+
+
+# --------------------
+# HASH PASSWORD
+# --------------------
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+# --------------------
+# CREATE JWT
+# --------------------
+def create_session_token(user_id: int, username: str) -> str:
+    payload = {
+        "user_id": user_id,
+        "username": username,
+        "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    }
+
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# --------------------
+# DECODE JWT
+# --------------------
+def decode_session_token(token: str):
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+
+
+# --------------------
+# LOGIN (ONLY HERE CREATES TOKEN)
+# --------------------
+def login(username: str, password: str):
+    user = fetch(
+        "SELECT * FROM users WHERE username = %s",
+        (username,)
+    )
+
+    if not user:
+        return None
+
+    if user["password"] != hash_password(password):
+        return None
+
+    token = create_session_token(
+        user_id=user["id"],
+        username=user["username"]
+    )
+
+    return {
+        "user_id": user["id"],
+        "username": user["username"],
+        "token": token
+    }
+
+
+# --------------------
+# GET USER FROM DB
+# --------------------
+def get_user_by_id(user_id: int):
+    return fetch(
+        "SELECT * FROM users WHERE id = %s",
+        (user_id,)
+    )
