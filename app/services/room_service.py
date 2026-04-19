@@ -73,7 +73,7 @@ def count_members(room_id: int) -> int:
 # ADD USER TO ROOM
 # --------------------
 def add_user_to_room(room_id: int, user_id: int):
-    # проверка: уже есть?
+    # проверка: уже есть? ??????????????????????
     existing = fetch(
         """
         SELECT 1 FROM room_members
@@ -109,7 +109,7 @@ def add_user_to_room(room_id: int, user_id: int):
         """,
         (room_id, user_id)
     )
-
+    # логика бустов !!!!!!!!!!!!!!!!!!!!!!!!!!!
     # если первый игрок → lobby
     if current_count == 0:
         set_room_status(room_id, "lobby")

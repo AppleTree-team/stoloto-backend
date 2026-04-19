@@ -26,7 +26,7 @@ def get_user_profile(user_id: int):
         JOIN rooms r ON rm.room_id = r.id
         JOIN room_pattern rp ON r.room_pattern_id = rp.id
         WHERE rm.user_id = %s
-        ORDER BY rm.joined_at DESC
+        ORDER BY rm.joined_at DESC 
         LIMIT 10
         """,
         (user_id,)
