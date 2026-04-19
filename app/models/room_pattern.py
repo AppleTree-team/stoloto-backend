@@ -1,8 +1,9 @@
 from pydantic import BaseModel
+from app.models.game_type import GameType
 
 class RoomPattern(BaseModel):
     id: int
-    game: str
+    game: GameType
     join_cost: int
     max_members_count: int = 10
     rank: float

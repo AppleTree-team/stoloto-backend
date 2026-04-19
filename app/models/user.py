@@ -1,10 +1,9 @@
 from pydantic import BaseModel
-from typing import Optional
-
+from datetime import datetime
 
 class User(BaseModel):
     id: int
     username: str
-    balance: int
-    created_at: str
-    is_bot: bool
+    balance: int = 0
+    created_at: datetime
+    is_bot: bool = False
