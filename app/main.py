@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
@@ -16,10 +16,10 @@ load_dotenv(override=False)
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Stoloto Project")
+    _app = FastAPI(title="Stoloto Project")
 
     origins = os.getenv("CORS_ORIGINS", "").split(",")
-    app.add_middleware(
+    _app.add_middleware(
         CORSMiddleware,
         allow_origins=[o.strip() for o in origins if o],
         allow_credentials=True,
@@ -28,19 +28,16 @@ def create_app() -> FastAPI:
     )
 
     # routers
-    app.include_router(auth.router, tags=["Auth"])
-    app.include_router(home.router, tags=["Home"])
+    main_router = APIRouter(prefix="/api")
+    main_router.include_router(auth.router, tags=["Auth"])
+    main_router.include_router(home.router, tags=["Home"])
 
-    @app.get("/")
-    def root(request: Request):
-        user_id = request.cookies.get("user_id")
+    @_app.get("/health")
+    async def health_check():
+        return {"status": "ok"}
 
-        if user_id:
-            return RedirectResponse(url="/home")
-        return RedirectResponse(url="/auth/login")
-
-    return app
-
+    _app.include_router(main_router)
+    return _app
 
 app = create_app()
 

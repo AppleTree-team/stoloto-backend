@@ -17,12 +17,10 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    networks:
-      - app_network
 
-  fastapi:
+  fastapi_service:
     build: .
-    container_name: casino_fastapi
+    container_name: fastapi_service
     environment:
       DB_HOST: casino_postgres
       DB_PORT: 5432
@@ -34,16 +32,16 @@ services:
       ACCESS_TOKEN_EXPIRE_HOURS: ${ACCESS_TOKEN_EXPIRE_HOURS}
     ports:
       - "${APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-    networks:
-      - app_network
 
 volumes:
   postgres_data:
 
-networks:
-  app_network:
-    driver: bridge
