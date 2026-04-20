@@ -10,5 +10,3 @@ DB_CONFIG = {
     "user":     os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
 }
-
-print(DB_CONFIG)

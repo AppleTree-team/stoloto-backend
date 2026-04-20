@@ -67,21 +67,6 @@ def get_connection():
 # -------------------------
 # READ (SELECT)
 # -------------------------
-def fetch(query, params=None):
-    conn = None
-    try:
-        conn = get_connection()
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(query, params)
-
-            if query.strip().lower().startswith("select"):
-                return cursor.fetchall()
-
-            return None
-    finally:
-        if conn:
-            conn.close()
-
 # def fetch(query, params=None):
 #     conn = None
 #     try:
@@ -89,19 +74,34 @@ def fetch(query, params=None):
 #         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
 #             cursor.execute(query, params)
 #
-#             # если одна строка
 #             if query.strip().lower().startswith("select"):
-#                 result = cursor.fetchall()
-#
-#                 if len(result) == 1:
-#                     return result[0]
-#                 return result
+#                 return cursor.fetchall()
 #
 #             return None
-#
 #     finally:
 #         if conn:
 #             conn.close()
+
+def fetch(query, params=None):
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(query, params)
+
+            # если одна строка
+            if query.strip().lower().startswith("select"):
+                result = cursor.fetchall()
+
+                if len(result) == 1:
+                    return result[0]
+                return result
+
+            return None
+
+    finally:
+        if conn:
+            conn.close()
 
 
 # -------------------------
