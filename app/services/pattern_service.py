@@ -15,21 +15,23 @@ def get_max_rooms_count():
             SELECT max_active_rooms
             FROM system_config
             """
-    return fetch_one(query)
+    q = fetch_one(query)
+    return q["max_active_rooms"]
+
 
 def set_max_rooms_count(new_count):
     execute("""
             UPDATE system_config
-            SET max_active_rooms = ?
+            SET max_active_rooms = %s
             """, (new_count,))
 
 # =========================================
 # 📤 GET PATTERNS
 # =========================================
 
-def get_all_patterns() -> List[Dict[str, Any]]:
+def get_all_active_patterns() -> List[Dict[str, Any]]:
     """
-    Все паттерны (включая неактивные)
+    Все паттерны (только активные)
     """
     query = """
         SELECT *
@@ -39,6 +41,17 @@ def get_all_patterns() -> List[Dict[str, Any]]:
     """
     return fetch_all(query)
 
+def get_all_disabled_patterns() -> List[Dict[str, Any]]:
+    """
+    Все паттерны (включая неактивные)
+    """
+    query = """
+        SELECT *
+        FROM room_pattern
+        WHERE is_active = FALSE
+        ORDER BY deleted_at DESC
+    """
+    return fetch_all(query)
 
 def get_pattern_by_id(pattern_id: int) -> Optional[Dict[str, Any]]:
     """
@@ -100,7 +113,7 @@ def create_pattern(data: Dict[str, Any]) -> int:
 def delete_pattern(pattern_id: int) -> bool:
     execute("""
         UPDATE room_pattern
-        SET is_active = FALSE
+        SET is_active = FALSE, deleted_at = CURRENT_TIMESTAMP
         WHERE id = %s
     """, (pattern_id,))
     return True
@@ -112,10 +125,6 @@ def update_pattern(old_pattern_id: int, new_data: Dict[str, Any]) -> int:
     - старый паттерн деактивируется
     - создаётся новый
     """
-    execute("""
-        UPDATE room_pattern
-        SET is_active = FALSE
-        WHERE id = %s
-    """, (old_pattern_id,))
+    delete_pattern(old_pattern_id)
 
     return create_pattern(new_data)

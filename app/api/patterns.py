@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Body, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, Body, HTTPException, Query
 from app.services import pattern_service
 from app.api.deps import get_current_user_profile, require_session_payload, ensure_admin
 
@@ -69,27 +70,29 @@ def update_limit(
     }
 
 
-
-
 @router.get("/")
 def get_patterns(
-        profile: dict = Depends(get_current_user_profile),
-        _payload: dict = Depends(require_session_payload),
+    disabled: Optional[str] = Query(None, description="Используйте ?disabled или ?disabled=true для неактивных"),
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
 ):
     """
     Получить все паттерны (только для администратора).
 
-    Возвращает список всех паттернов (комнат) в системе.
-    Требуется JWT токен и права администратора.
+    Параметры запроса (query):
+        - disabled (bool): Если true — возвращает только неактивные паттерны.
+          По умолчанию false.
 
-    Ответы:
-        - 200: Список паттернов.
-        - 401: Неавторизован (неверный или отсутствует токен).
-        - 403: Доступ запрещён (не администратор).
-        - 500: Внутренняя ошибка сервера.
+    Возвращает:
+        - 200: Список паттернов (активных или неактивных в зависимости от disabled)
+        - 401: Неавторизован
+        - 403: Доступ запрещён
     """
     ensure_admin(profile)
-    return pattern_service.get_all_patterns()
+    if disabled is not None:
+        return pattern_service.get_all_disabled_patterns()
+    else:
+        return pattern_service.get_all_active_patterns()
 
 
 @router.post("/")

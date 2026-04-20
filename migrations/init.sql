@@ -32,6 +32,7 @@ CREATE TABLE room_pattern (
 
     max_rooms_count INTEGER NOT NULL DEFAULT 50,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    deleted_at TIMESTAMP DEFAULT NULL,
     weight INTEGER NOT NULL DEFAULT 1
 );
 
