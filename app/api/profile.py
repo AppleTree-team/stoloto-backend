@@ -7,7 +7,7 @@ router = APIRouter(prefix="/profile", tags=["Profile"])
 
 @router.get("/me")
 def profile_me(
-    profile: dict = Depends(get_current_user_profile),
+    profile:  dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
     """

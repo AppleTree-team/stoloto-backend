@@ -6,7 +6,7 @@ from app.db.db import fetch
 # --------------------
 def get_user_profile(user_id: int):
     user = fetch(
-        "SELECT id, username, balance, created_at, is_bot FROM users WHERE id = %s",
+        "SELECT id, username, balance, created_at, is_bot, is_admin FROM users WHERE id = %s",
         (user_id,)
     )
 

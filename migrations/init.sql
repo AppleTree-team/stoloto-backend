@@ -9,7 +9,8 @@ CREATE TABLE users (
     password TEXT NOT NULL,
     balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_bot BOOLEAN DEFAULT FALSE
+    is_bot BOOLEAN DEFAULT FALSE,
+    is_admin BOOLEAN DEFAULT FALSE
 );
 
 CREATE TYPE games AS ENUM ('wheel', 'aviator', 'planka');
@@ -82,6 +83,10 @@ SELECT
     FALSE
 FROM generate_series(1, 100) AS i;
 
+--Для отладки. При деплое изменить!
+INSERT INTO admin (username, password, balance, is_admin) VALUES ('admin', 'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3', 0,
+                                                                  True)
+
 
 -- 100 ботов
 INSERT INTO users (username, password, balance, is_bot)
@@ -91,4 +96,5 @@ SELECT
     0,
     TRUE
 FROM generate_series(1, 100) AS i;
+
 
