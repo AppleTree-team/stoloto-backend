@@ -20,6 +20,7 @@ CREATE TABLE room_pattern (
     game games NOT NULL,
     join_cost BIGINT NOT NULL CHECK (join_cost > 0),
 
+    is_active BOOLEAN DEFAULT TRUE,
     max_members_count INTEGER NOT NULL DEFAULT 10,
     rank FLOAT NOT NULL,
     min_bots_count INTEGER NOT NULL DEFAULT 1,
@@ -84,7 +85,7 @@ SELECT
 FROM generate_series(1, 100) AS i;
 
 --Для отладки. При деплое изменить!
-INSERT INTO admin (username, password, balance, is_admin)
+INSERT INTO users (username, password, balance, is_admin)
 VALUES
     ('admin',
      'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3',
