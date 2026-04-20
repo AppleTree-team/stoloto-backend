@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel
 
 from app.services.auth_service import login
@@ -29,3 +29,11 @@ def login_endpoint(data: LoginRequest, response: Response):
         "user_id": result["user_id"],
         "username": result["username"]
     }
+
+
+
+@router.post("/logout")
+def logout_endpoint(request: Request, response: Response):
+    for cookie in request.cookies:
+        response.delete_cookie(cookie)
+    return {"message": "Logout successful, all cookies deleted"}

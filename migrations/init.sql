@@ -84,8 +84,11 @@ SELECT
 FROM generate_series(1, 100) AS i;
 
 --Для отладки. При деплое изменить!
-INSERT INTO admin (username, password, balance, is_admin) VALUES ('admin', 'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3', 0,
-                                                                  True)
+INSERT INTO admin (username, password, balance, is_admin)
+VALUES
+    ('admin',
+     'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3',
+     0,True);
 
 
 -- 100 ботов
