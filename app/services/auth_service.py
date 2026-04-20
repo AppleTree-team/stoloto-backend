@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from jose import jwt, JWTError
 
-from app.db.db import fetch
+from app.db.db import fetch_one, fetch_all
 
 
 # --------------------
@@ -54,7 +54,7 @@ def decode_session_token(token: str):
 # LOGIN (ONLY HERE CREATES TOKEN)
 # --------------------
 def login(username: str, password: str):
-    user = fetch(
+    user = fetch_one(
         "SELECT * FROM users WHERE username = %s",
         (username,)
     )
@@ -81,7 +81,7 @@ def login(username: str, password: str):
 # GET USER FROM DB
 # --------------------
 def get_user_by_id(user_id: int):
-    return fetch(
+    return fetch_one(
         "SELECT * FROM users WHERE id = %s",
         (user_id,)
     )

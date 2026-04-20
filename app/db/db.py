@@ -82,23 +82,29 @@ def get_connection():
 #         if conn:
 #             conn.close()
 
-def fetch(query, params=None):
+def fetch_one(query, params=None):
+    """Выполняет SELECT запрос и возвращает одну строку (или None)"""
     conn = None
     try:
         conn = get_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(query, params)
+            result = cursor.fetchone()
+            return result
+    finally:
+        if conn:
+            conn.close()
 
-            # если одна строка
-            if query.strip().lower().startswith("select"):
-                result = cursor.fetchall()
 
-                if len(result) == 1:
-                    return result[0]
-                return result
-
-            return None
-
+def fetch_all(query, params=None):
+    """Выполняет SELECT запрос и возвращает все строки (список)"""
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(query, params)
+            result = cursor.fetchall()
+            return result if result else []
     finally:
         if conn:
             conn.close()
@@ -122,6 +128,27 @@ def execute(query, params=None):
             conn.rollback()
         raise e
 
+    finally:
+        if conn:
+            conn.close()
+
+
+def execute_with_returning(query: str, params=None) -> Dict[str, Any]:
+    """
+    Выполняет INSERT/UPDATE с RETURNING и возвращает результат
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(query, params)
+            conn.commit()  # ← ВАЖНО: коммитим!
+            result = cursor.fetchone()
+            return result
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise e
     finally:
         if conn:
             conn.close()

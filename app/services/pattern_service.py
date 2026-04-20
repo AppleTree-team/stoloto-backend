@@ -1,40 +1,41 @@
 from typing import List, Dict, Any, Optional
 
-from app.db.db import fetch, execute
+from app.db.db import fetch_one, fetch_all, execute, execute_with_returning
 
 
 # =========================================
 # ⚙️ SYSTEM CONFIG
 # =========================================
 
+"""
 def get_max_active_rooms() -> int:
-    """
+    ""
     Получить глобальный лимит активных комнат
-    """
-    query = """
+    ""
+    query = ""
         SELECT max_active_rooms
         FROM system_config
         WHERE id = 1
-    """
-    result = fetch(query)
+    ""
+    result = fetch_one(query)
     return result[0]["max_active_rooms"] if result else 0
-
+"""
 
 # =========================================
 # 📤 GET PATTERNS
 # =========================================
 
-def get_all_patterns(game: str) -> List[Dict[str, Any]]:
+def get_all_patterns() -> List[Dict[str, Any]]:
     """
     Все паттерны (включая неактивные)
     """
     query = """
         SELECT *
         FROM room_pattern
-        WHERE game = %s
+        WHERE is_active = TRUE
         ORDER BY id DESC
     """
-    return fetch(query, (game,))
+    return fetch_all(query)
 
 
 def get_pattern_by_id(pattern_id: int) -> Optional[Dict[str, Any]]:
@@ -46,19 +47,10 @@ def get_pattern_by_id(pattern_id: int) -> Optional[Dict[str, Any]]:
         FROM room_pattern
         WHERE id = %s
     """
-    result = fetch(query, (pattern_id,))
-    return result[0] if result else None
+    result = fetch_one(query, (pattern_id,))
+    return result
 
 
-def export_patterns(game: str) -> Dict[str, Any]:
-    """
-    Полный JSON для админки
-    """
-    return {
-        "game": game,
-        "max_active_rooms": get_max_active_rooms(),
-        "patterns": get_all_patterns(game)
-    }
 
 
 # =========================================
@@ -98,9 +90,18 @@ def create_pattern(data: Dict[str, Any]) -> int:
         )
         RETURNING id
     """
-    result = fetch(query, data)
-    return result[0]["id"]
+    result = execute_with_returning(query, data)
+    return result["id"]
 
+
+
+def delete_pattern(pattern_id: int) -> bool:
+    execute("""
+        UPDATE room_pattern
+        SET is_active = FALSE
+        WHERE id = %s
+    """, (pattern_id,))
+    return True
 
 # =========================================
 # 🔁 UPDATE (VERSIONING)

@@ -1,49 +1,46 @@
-from app.db.db import fetch
+from app.db.db import fetch_one, fetch_all
 
 def get_user_profile(user_id: int):
-    user = fetch(
+    user = fetch_one(
         """
-        SELECT id, username, balance, created_at, is_bot
+        SELECT id, username, balance, created_at, is_bot, is_admin
         FROM users
         WHERE id = %s
         """,
         (user_id,)
     )
+    return user
 
-    if not user:
-        return None
 
-    history = fetch(
+
+def get_user_game_history(user_id: int, limit: int = 10):
+    """Получить историю игр пользователя"""
+    history = fetch_all(
         """
-        SELECT 
-            r.id as room_id,
-            r.status,
-            rm.boost,
-            CASE 
-                WHEN r.winner_id = %s THEN 'win'
-                ELSE 'lose'
-            END AS result,
-            r.created_at,
-            rp.game,
-            rp.join_cost
+        SELECT r.id    as room_id,
+               r.status,
+               rm.boost,
+               CASE
+                   WHEN r.winner_id = %s THEN 'win'
+                   ELSE 'lose'
+                   END AS result,
+               r.created_at,
+               rp.game,
+               rp.join_cost
         FROM room_members rm
-        JOIN rooms r ON rm.room_id = r.id
-        JOIN room_pattern rp ON r.room_pattern_id = rp.id
+                 JOIN rooms r ON rm.room_id = r.id
+                 JOIN room_pattern rp ON r.room_pattern_id = rp.id
         WHERE rm.user_id = %s
         ORDER BY rm.joined_at DESC
-        LIMIT 10
+            LIMIT %s
         """,
-        (user_id, user_id)
+        (user_id, user_id, limit)
     )
 
     if not isinstance(history, list):
         history = [history] if history else []
 
-    return {
-        "user": user,
-        "history": history
-    }
-
+    return history
 
 # from app.db.db import fetch
 #
