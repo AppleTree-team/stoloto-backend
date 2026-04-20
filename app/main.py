@@ -30,7 +30,7 @@ def create_app() -> FastAPI:
     # routers
     main_router = APIRouter(prefix="/api")
     main_router.include_router(auth.router, tags=["Auth"])
-    main_router.include_router(home.router, tags=["Home"])
+    #main_router.include_router(home.router, tags=["Home"])
     main_router.include_router(profile.router, tags=["Profile"])
 
     @_app.get("/health")

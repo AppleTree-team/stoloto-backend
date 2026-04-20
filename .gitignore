@@ -42,7 +42,7 @@ ENV/
 # =====================
 # Environment variables
 # =====================
-.env
+app/.env
 .env.*
 !.env.example
 

@@ -5,7 +5,7 @@ from app.services.room_service import create_room, add_user_to_room
 # ========================
 # CONFIG
 # ========================
-MAX_ROOMS_PER_PATTERN = 50
+#MAX_ROOMS_PER_PATTERN = 50
 
 
 # ========================
