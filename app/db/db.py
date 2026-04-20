@@ -59,3 +59,19 @@ def execute(query, params=None):
     finally:
         if conn:
             conn.close()
+            
+            
+from contextlib import contextmanager
+
+@contextmanager
+def get_connection_cursor():
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            yield conn, cursor
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

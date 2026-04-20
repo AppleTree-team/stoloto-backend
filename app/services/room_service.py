@@ -198,6 +198,52 @@ def run_game(room_id: int):
 
 
 
+def add_user_to_room_tx(cursor, room_id: int, user_id: int):
+    # Проверка: уже в этой комнате?
+    cursor.execute(
+        "SELECT 1 FROM room_members WHERE room_id = %s AND user_id = %s",
+        (room_id, user_id)
+    )
+    if cursor.fetchone():
+        return
+
+    # Проверка: не состоит ли уже в другой активной комнате?
+    cursor.execute(
+        """
+        SELECT 1 FROM room_members rm
+        JOIN rooms r ON rm.room_id = r.id
+        WHERE rm.user_id = %s AND r.status IN ('waiting', 'lobby', 'running')
+        """,
+        (user_id,)
+    )
+    if cursor.fetchone():
+        raise Exception("User already in an active room")
+
+    # Проверка заполненности
+    cursor.execute(
+        """
+        SELECT rp.max_members_count, COUNT(rm.id) as current_count
+        FROM rooms r
+        JOIN room_pattern rp ON r.room_pattern_id = rp.id
+        LEFT JOIN room_members rm ON rm.room_id = r.id
+        WHERE r.id = %s
+        GROUP BY rp.max_members_count
+        """,
+        (room_id,)
+    )
+    row = cursor.fetchone()
+    if row["current_count"] >= row["max_members_count"]:
+        raise Exception("Room is full")
+
+    cursor.execute(
+        "INSERT INTO room_members (room_id, user_id) VALUES (%s, %s)",
+        (room_id, user_id)
+    )
+
+    cursor.execute(
+        "UPDATE rooms SET status = 'lobby' WHERE id = %s",
+        (room_id,)
+    )
 
 #class RoomService:
 

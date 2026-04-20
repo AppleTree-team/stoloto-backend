@@ -65,7 +65,20 @@ CREATE TABLE room_members (
 
 
 
+-- =====================
+-- ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
+-- =====================
+CREATE INDEX IF NOT EXISTS idx_rooms_pattern_status_created ON rooms(room_pattern_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_room_members_room_id ON room_members(room_id);
+CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id);
 
+-- Для быстрого поиска паттерна по игре и стоимости
+CREATE INDEX IF NOT EXISTS idx_room_pattern_game_cost ON room_pattern(game, join_cost);
+
+-- Для проверки активных комнат пользователя
+CREATE INDEX IF NOT EXISTS idx_room_members_user_active ON room_members(user_id, room_id) WHERE ...? 
+-- Уникальный индекс лучше не делать через WHERE с подзапросом (не поддерживается в PG для частичных индексов)
+-- Достаточно проверки в коде.
 
 
 
