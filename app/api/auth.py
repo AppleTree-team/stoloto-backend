@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from app.services.auth_service import login
 
-router = APIRouter()
+router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
 class LoginRequest(BaseModel):
@@ -11,7 +11,7 @@ class LoginRequest(BaseModel):
     password: str
 
 
-@router.post("/auth/login")
+@router.post("/login")
 def login_endpoint(data: LoginRequest, response: Response):
     result = login(data.username, data.password)
 

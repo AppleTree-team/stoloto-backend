@@ -1,5 +1,4 @@
 import os
-from dotenv import load_dotenv
 
 import hashlib
 from datetime import datetime, timedelta
@@ -12,9 +11,7 @@ from app.db.db import fetch
 # --------------------
 # CONFIG
 # --------------------
-load_dotenv(override=False)
-
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", 'None')
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", None)
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "24"))
 
