@@ -54,7 +54,7 @@ CREATE TABLE rooms (
     started_at TIMESTAMP,
     ended_at TIMESTAMP,
 
-    status room_status NOT NULL DEFAULT 'waiting',
+    status room_status NOT NULL DEFAULT 'lobby',
 
     winner_id INTEGER REFERENCES users(id),
     websocket_access_token TEXT NOT NULL
