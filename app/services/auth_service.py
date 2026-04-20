@@ -61,7 +61,7 @@ def login(username: str, password: str):
 
     if not user:
         return None
-
+    print(user)
     if user["password"] != hash_password(password):
         return None
 

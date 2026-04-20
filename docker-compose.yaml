@@ -38,8 +38,9 @@ services:
       timeout: 3s
       retries: 3
     depends_on:
-      postgres:
-        condition: service_healthy
+      - postgres
+      #postgres:
+      #  condition: service_healthy
     restart: unless-stopped
 
 volumes:
