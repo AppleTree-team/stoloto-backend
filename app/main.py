@@ -5,7 +5,7 @@ from fastapi import Request
 import uvicorn
 
 
-from app.api import auth, home, profile
+from app.api import auth, profile
 
 import os
 from dotenv import load_dotenv
