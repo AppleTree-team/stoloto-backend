@@ -17,11 +17,58 @@ def check_pattern_exists(pattern_id):
 
 
 
-def check_pattern_exists(pattern_id):
-    """Проверяет, существует ли паттерн и активен ли он."""
-    existing = pattern_service.get_pattern_by_id(pattern_id)
-    if not existing or not existing["is_active"]:
-        raise HTTPException(status_code=404, detail="Pattern not found")
+
+@router.get("/limit")
+def get_limit(
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Получить текущее максимальное количество комнат (лимит).
+
+    **Требования:** права администратора.
+
+    Возвращает:
+        - 200: { "status": "success", "max_room_count": <int> }
+        - 401: Неавторизован
+        - 403: Доступ запрещён (не администратор)
+    """
+    ensure_admin(profile)
+    count = pattern_service.get_max_rooms_count()
+    return {
+        "status": "success",
+        "max_room_count": count
+    }
+
+
+@router.put("/limit/{new_limit}")
+def update_limit(
+    new_limit: int,
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Установить новое максимальное количество комнат (лимит).
+
+    **Параметр пути:**
+        - `new_limit` (int): Новое значение лимита (должно быть положительным целым).
+
+    **Требования:** права администратора.
+
+    Возвращает:
+        - 200: { "status": "success", "message": "Max rooms count updated" }
+        - 400: Некорректное значение (если сервис проверяет)
+        - 401: Неавторизован
+        - 403: Доступ запрещён
+    """
+    ensure_admin(profile)
+    pattern_service.set_max_rooms_count(new_limit)
+    return {
+        "status": "success",
+        "message": "Max rooms count updated"
+    }
+
+
 
 
 @router.get("/")

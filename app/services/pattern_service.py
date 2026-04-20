@@ -7,19 +7,21 @@ from app.db.db import fetch_one, fetch_all, execute, execute_with_returning
 # ⚙️ SYSTEM CONFIG
 # =========================================
 
-"""
-def get_max_active_rooms() -> int:
-    ""
-    Получить глобальный лимит активных комнат
-    ""
-    query = ""
-        SELECT max_active_rooms
-        FROM system_config
-        WHERE id = 1
-    ""
-    result = fetch_one(query)
-    return result[0]["max_active_rooms"] if result else 0
-"""
+def get_max_rooms_count():
+    """
+    Максимальное кол-во комнат
+    """
+    query = """
+            SELECT max_active_rooms
+            FROM system_config
+            """
+    return fetch_one(query)
+
+def set_max_rooms_count(new_count):
+    execute("""
+            UPDATE system_config
+            SET max_active_rooms = ?
+            """, (new_count,))
 
 # =========================================
 # 📤 GET PATTERNS
@@ -103,9 +105,6 @@ def delete_pattern(pattern_id: int) -> bool:
     """, (pattern_id,))
     return True
 
-# =========================================
-# 🔁 UPDATE (VERSIONING)
-# =========================================
 
 def update_pattern(old_pattern_id: int, new_data: Dict[str, Any]) -> int:
     """
@@ -120,40 +119,3 @@ def update_pattern(old_pattern_id: int, new_data: Dict[str, Any]) -> int:
     """, (old_pattern_id,))
 
     return create_pattern(new_data)
-
-
-# =========================================
-# 🟢 ACTIVATE / DEACTIVATE
-# =========================================
-
-def set_pattern_active(pattern_id: int, active: bool) -> None:
-    """
-    Включить / выключить паттерн
-    """
-    execute("""
-        UPDATE room_pattern
-        SET is_active = %s
-        WHERE id = %s
-    """, (active, pattern_id))
-
-
-def bulk_activate_patterns(pattern_ids: List[int]) -> None:
-    if not pattern_ids:
-        return
-
-    execute("""
-        UPDATE room_pattern
-        SET is_active = TRUE
-        WHERE id = ANY(%s)
-    """, (pattern_ids,))
-
-
-def bulk_deactivate_patterns(pattern_ids: List[int]) -> None:
-    if not pattern_ids:
-        return
-
-    execute("""
-        UPDATE room_pattern
-        SET is_active = FALSE
-        WHERE id = ANY(%s)
-    """, (pattern_ids,))

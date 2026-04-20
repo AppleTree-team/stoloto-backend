@@ -1,11 +1,8 @@
-CREATE TABLE casino_balance (
-    id INTEGER PRIMARY KEY DEFAULT 1,
-    balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
-);
+
 
 CREATE TABLE system_config (
-    id INTEGER PRIMARY KEY DEFAULT 1,
-    max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0)
+    max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0),
+    balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
 );
 
 CREATE TABLE users (
@@ -41,7 +38,6 @@ CREATE TABLE room_pattern (
 
 
 CREATE TYPE room_status AS ENUM (
-    'waiting', -- комната создана но игроков 0
     'lobby',   -- 1+ игрок. начался таймер до прихода ботов
     'running', -- игра играется
     'finished' -- игра завершена
@@ -73,6 +69,41 @@ CREATE TABLE room_members (
 );
 
 
+
+
+
+
+
+
+INSERT INTO system_config (max_active_rooms, balance) VALUES (50, 9999999999);
+--ЗАЩИТА КОНФИГА КАЗИНО
+-- Создаём триггерную функцию для запрета INSERT после того, как строка уже есть
+CREATE OR REPLACE FUNCTION prevent_extra_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (SELECT COUNT(*) FROM system_config) >= 1 THEN
+        RAISE EXCEPTION 'Таблица system_config уже содержит строку. INSERT запрещён.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Создаём триггер на INSERT
+CREATE TRIGGER trg_prevent_extra_insert
+BEFORE INSERT ON system_config
+FOR EACH ROW EXECUTE FUNCTION prevent_extra_insert();
+
+-- Запрещаем DELETE (навсегда)
+CREATE OR REPLACE FUNCTION prevent_delete_config()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'DELETE запрещён в таблице system_config (должна оставаться единственная строка).';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevent_delete_config
+BEFORE DELETE ON system_config
+FOR EACH ROW EXECUTE FUNCTION prevent_delete_config();
 
 
 
