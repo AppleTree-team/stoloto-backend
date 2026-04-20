@@ -19,16 +19,7 @@ def ensure_admin(profile: dict):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-# =========================================
-# 🏠 MAIN
-# =========================================
 
-@router.get("/")
-def admin_main(
-    profile: dict = Depends(get_current_user_profile),
-    _payload: dict = Depends(require_session_payload),
-):
-    return profile
 
 
 # =========================================

@@ -8,6 +8,10 @@ from app.services.user_service import get_user_profile
 
 cookie_scheme = APIKeyCookie(name="session_id", auto_error=False)
 
+def ensure_admin(profile: dict):
+    if not profile["is_admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
 
 def require_session_payload(
     request: Request,
