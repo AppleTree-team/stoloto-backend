@@ -3,6 +3,11 @@ CREATE TABLE casino_balance (
     balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
 );
 
+CREATE TABLE system_config (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0)
+);
+
 CREATE TABLE users (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
@@ -20,14 +25,17 @@ CREATE TABLE room_pattern (
     game games NOT NULL,
     join_cost BIGINT NOT NULL CHECK (join_cost > 0),
 
-    is_active BOOLEAN DEFAULT TRUE,
     max_members_count INTEGER NOT NULL DEFAULT 10,
     rank FLOAT NOT NULL,
     min_bots_count INTEGER NOT NULL DEFAULT 1,
     max_bots_count INTEGER NOT NULL DEFAULT 9,
 
     waiting_lobby_stage INTEGER NOT NULL DEFAULT 60,
-    waiting_shop_stage INTEGER NOT NULL DEFAULT 30
+    waiting_shop_stage INTEGER NOT NULL DEFAULT 30,
+
+    max_rooms_count INTEGER NOT NULL DEFAULT 50,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    weight INTEGER NOT NULL DEFAULT 1
 );
 
 
@@ -100,5 +108,52 @@ SELECT
     0,
     TRUE
 FROM generate_series(1, 100) AS i;
+
+-- Заполнение таблицы паттернов
+INSERT INTO room_pattern (game, join_cost, max_members_count, rank, min_bots_count, max_bots_count, waiting_lobby_stage, waiting_shop_stage)
+VALUES
+('wheel',   100, 10, 1.0, 2, 5, 60, 30),
+('aviator', 200, 8,  1.5, 1, 4, 45, 20),
+('planka',  50,  6,  0.8, 1, 3, 30, 15);
+
+
+-- Заполнение комнат
+INSERT INTO rooms (room_pattern_id, created_at, started_at, ended_at, status, winner_id, websocket_access_token)
+SELECT
+    (i % 3) + 1,                         -- равномерно по 3 паттернам
+    NOW() - INTERVAL '2 hours',
+    NOW() - INTERVAL '90 minutes',
+    NOW() - INTERVAL '60 minutes',
+    'finished',
+    ((i % 10) + 1),                      -- winner всегда user1–user10
+    md5(random()::text)
+FROM generate_series(1, 100) AS i;
+
+
+-- Заполнение участников комнат
+INSERT INTO room_members (room_id, user_id, boost)
+SELECT
+    r.id,
+    u.user_id,
+    (ARRAY[0, 5, 10, 15])[floor(random() * 4 + 1)] AS boost
+FROM rooms r
+JOIN LATERAL (
+    SELECT DISTINCT user_id
+    FROM (
+        -- победитель ОБЯЗАТЕЛЬНО
+        SELECT r.winner_id AS user_id
+
+        UNION
+
+        -- + ещё 2–4 случайных игрока из топ-10
+        SELECT (floor(random() * 10) + 1)::int
+        FROM generate_series(1, 4)
+    ) t
+) u ON TRUE
+WHERE r.status = 'finished';
+
+
+
+
 
 

@@ -5,7 +5,7 @@ from fastapi import Request
 import uvicorn
 
 
-from app.api import auth, profile, room
+from app.api import auth, profile, room, patterns
 
 import os
 from dotenv import load_dotenv
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     main_router.include_router(auth.router, tags=["Auth"])
     #main_router.include_router(home.router, tags=["Home"])
     main_router.include_router(profile.router, tags=["Profile"])
+    main_router.include_router(patterns.router, tags=["Patterns"])
     #main_router.include_router(room.router, tags=["Room"])
 
     @_app.get("/health")
