@@ -18,7 +18,7 @@ CREATE TABLE users (
     is_admin BOOLEAN DEFAULT FALSE
 );
 
-CREATE TYPE games AS ENUM ('wheel', 'aviator', 'planka');
+CREATE TYPE games AS ENUM ('wheel', 'aviator', 'plinko');
 
 CREATE TABLE room_pattern (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -41,8 +41,8 @@ CREATE TABLE room_pattern (
 
 
 CREATE TYPE room_status AS ENUM (
-    'waiting', -- комната создана но игроков 0
-    'lobby',   -- 1+ игрок. начался таймер до прихода ботов
+    'lobby',   -- начальнаое состояние,если >=1 игрок. начался таймер до прихода ботов
+    'shop',    -- этап закупки бустов и доп мест в комнате. после этого этапа добавляются боты
     'running', -- игра играется
     'finished' -- игра завершена
 );
@@ -58,7 +58,7 @@ CREATE TABLE rooms (
     started_at TIMESTAMP,
     ended_at TIMESTAMP,
 
-    status room_status NOT NULL DEFAULT 'waiting',
+    status room_status NOT NULL DEFAULT 'lobby',
 
     winner_id INTEGER REFERENCES users(id),
     websocket_access_token TEXT NOT NULL
@@ -114,16 +114,16 @@ INSERT INTO room_pattern (game, join_cost, max_members_count, rank, min_bots_cou
 VALUES
 ('wheel',   100, 10, 1.0, 2, 5, 60, 30),
 ('aviator', 200, 8,  1.5, 1, 4, 45, 20),
-('planka',  50,  6,  0.8, 1, 3, 30, 15);
+('plinko',  50,  6,  0.8, 1, 3, 30, 15);
 
 
 -- Заполнение комнат
 INSERT INTO rooms (room_pattern_id, created_at, started_at, ended_at, status, winner_id, websocket_access_token)
 SELECT
     (i % 3) + 1,                         -- равномерно по 3 паттернам
-    NOW() - INTERVAL '2 hours',
-    NOW() - INTERVAL '90 minutes',
-    NOW() - INTERVAL '60 minutes',
+    NOW() - INTERVAL '5 hours',
+    NOW() - INTERVAL '10 minutes',
+    NOW() - INTERVAL '15 minutes',
     'finished',
     ((i % 10) + 1),                      -- winner всегда user1–user10
     md5(random()::text)
