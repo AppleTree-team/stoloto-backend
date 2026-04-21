@@ -22,6 +22,7 @@ def search_room(
         - 401: Неавторизован
     """
 
+    # здесь нужно праивильную функицю из matchmaking_service
     #room = find_room_for_user(user_id=profile["id"])
 
     #if not room:
