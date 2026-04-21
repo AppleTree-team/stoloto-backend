@@ -19,7 +19,7 @@ def create_room(pattern_id: int):
 # =========================================================
 # 👤 ADD USER SLOTS
 # =========================================================
-def add_user_slots(room_id: int, user_id: int, slots_count: int, boost: int = 0):
+def add_user(room_id: int, user_id: int, slots_count: int, boost: int = 0):
     """
     пользователь занимает N слотов в комнате
     """
@@ -193,7 +193,6 @@ def run_game(room_id: int):
     if room["status"] != "lobby":
         return
 
-
     # 🚀 перевод в running
     fetch("""
         UPDATE rooms
@@ -202,7 +201,6 @@ def run_game(room_id: int):
         WHERE id = %s
     """, (room_id,))
 
-
     pattern = fetch("""
         SELECT * FROM room_pattern
         WHERE id = %s
@@ -210,7 +208,6 @@ def run_game(room_id: int):
 
 
     members = get_room_members(room_id)
-
 
     # 🎯 веса
     weighted = []
@@ -221,14 +218,12 @@ def run_game(room_id: int):
         weighted.append((m["user_id"], weight, m["is_bot"]))
         total_pool += pattern["join_cost"]
 
-
     # 🏆 выбор победителя
     winner = weighted_random(weighted)
 
 
     payout = int(total_pool * 0.9)
     casino_cut = total_pool - payout
-
 
     # 💰 распределение
     if winner["is_bot"]:
@@ -281,3 +276,8 @@ def weighted_random(items):
             })
 
     return random.choice(pool)
+
+
+
+
+# Оценщик шанса
