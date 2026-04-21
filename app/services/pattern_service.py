@@ -1,41 +1,57 @@
 from typing import List, Dict, Any, Optional
 
-from app.db.db import fetch, execute
+from app.db.db import fetch_one, fetch_all, execute, execute_with_returning
 
 
 # =========================================
 # ⚙️ SYSTEM CONFIG
 # =========================================
 
-def get_max_active_rooms() -> int:
+def get_max_rooms_count():
     """
-    Получить глобальный лимит активных комнат
+    Максимальное кол-во комнат
     """
     query = """
-        SELECT max_active_rooms
-        FROM system_config
-        WHERE id = 1
-    """
-    result = fetch(query)
-    return result[0]["max_active_rooms"] if result else 0
+            SELECT max_active_rooms
+            FROM system_config
+            """
+    q = fetch_one(query)
+    return q["max_active_rooms"]
 
+
+def set_max_rooms_count(new_count):
+    execute("""
+            UPDATE system_config
+            SET max_active_rooms = %s
+            """, (new_count,))
 
 # =========================================
 # 📤 GET PATTERNS
 # =========================================
 
-def get_all_patterns(game: str) -> List[Dict[str, Any]]:
+def get_all_active_patterns() -> List[Dict[str, Any]]:
+    """
+    Все паттерны (только активные)
+    """
+    query = """
+        SELECT *
+        FROM room_pattern
+        WHERE is_active = TRUE
+        ORDER BY id DESC
+    """
+    return fetch_all(query)
+
+def get_all_disabled_patterns() -> List[Dict[str, Any]]:
     """
     Все паттерны (включая неактивные)
     """
     query = """
         SELECT *
         FROM room_pattern
-        WHERE game = %s
-        ORDER BY id DESC
+        WHERE is_active = FALSE
+        ORDER BY deleted_at DESC
     """
-    return fetch(query, (game,))
-
+    return fetch_all(query)
 
 def get_pattern_by_id(pattern_id: int) -> Optional[Dict[str, Any]]:
     """
@@ -46,19 +62,10 @@ def get_pattern_by_id(pattern_id: int) -> Optional[Dict[str, Any]]:
         FROM room_pattern
         WHERE id = %s
     """
-    result = fetch(query, (pattern_id,))
-    return result[0] if result else None
+    result = fetch_one(query, (pattern_id,))
+    return result
 
 
-def export_patterns(game: str) -> Dict[str, Any]:
-    """
-    Полный JSON для админки
-    """
-    return {
-        "game": game,
-        "max_active_rooms": get_max_active_rooms(),
-        "patterns": get_all_patterns(game)
-    }
 
 
 # =========================================
@@ -98,13 +105,19 @@ def create_pattern(data: Dict[str, Any]) -> int:
         )
         RETURNING id
     """
-    result = fetch(query, data)
-    return result[0]["id"]
+    result = execute_with_returning(query, data)
+    return result["id"]
 
 
-# =========================================
-# 🔁 UPDATE (VERSIONING)
-# =========================================
+
+def delete_pattern(pattern_id: int) -> bool:
+    execute("""
+        UPDATE room_pattern
+        SET is_active = FALSE, deleted_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """, (pattern_id,))
+    return True
+
 
 def update_pattern(old_pattern_id: int, new_data: Dict[str, Any]) -> int:
     """
@@ -112,47 +125,6 @@ def update_pattern(old_pattern_id: int, new_data: Dict[str, Any]) -> int:
     - старый паттерн деактивируется
     - создаётся новый
     """
-    execute("""
-        UPDATE room_pattern
-        SET is_active = FALSE
-        WHERE id = %s
-    """, (old_pattern_id,))
+    delete_pattern(old_pattern_id)
 
     return create_pattern(new_data)
-
-
-# =========================================
-# 🟢 ACTIVATE / DEACTIVATE
-# =========================================
-
-def set_pattern_active(pattern_id: int, active: bool) -> None:
-    """
-    Включить / выключить паттерн
-    """
-    execute("""
-        UPDATE room_pattern
-        SET is_active = %s
-        WHERE id = %s
-    """, (active, pattern_id))
-
-
-def bulk_activate_patterns(pattern_ids: List[int]) -> None:
-    if not pattern_ids:
-        return
-
-    execute("""
-        UPDATE room_pattern
-        SET is_active = TRUE
-        WHERE id = ANY(%s)
-    """, (pattern_ids,))
-
-
-def bulk_deactivate_patterns(pattern_ids: List[int]) -> None:
-    if not pattern_ids:
-        return
-
-    execute("""
-        UPDATE room_pattern
-        SET is_active = FALSE
-        WHERE id = ANY(%s)
-    """, (pattern_ids,))
