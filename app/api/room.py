@@ -1,13 +1,20 @@
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_current_user_profile, require_session_payload
+from app.services.matchmaking_service import find_room_for_user
+from app.services.room_service import get_room_by_token, get_room_members
 #from app.services.room_service import find_room_for_user, get_room_by_token
 
 router = APIRouter(prefix="/room", tags=["Room"])
 
+class SearchRequest(BaseModel):
+    game: str
+    join_cost: int
 
 @router.post("/search")
 def search_room(
+    data: SearchRequest,
     profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
@@ -31,7 +38,16 @@ def search_room(
     #return {
     #    "room_access_token": room["access_token"]
     #}
+    result = find_room_for_user(data.game, data.join_cost)
 
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    room = result["room"]
+
+    return {
+        "room_access_token": room["websocket_access_token"]
+    }
 
 @router.get("/{room_access_token}")
 def get_room(
@@ -53,9 +69,17 @@ def get_room(
         - 404: Комната не найдена
     """
 
-    # room = get_room_by_token(room_access_token)
-    #
-    # if not room:
-    #     raise HTTPException(status_code=404, detail="Room not found")
-    #
-    # return room
+    room = get_room_by_token(room_access_token)
+
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    players = get_room_members(room["id"])
+
+    return {
+        "id": room["id"],
+        "status": room["status"],
+        "players": players,
+        "game": room["game"],
+        "join_cost": room["join_cost"]
+    }
