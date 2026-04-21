@@ -39,7 +39,7 @@ CREATE TABLE room_pattern (
 
 
 CREATE TYPE room_status AS ENUM (
-    'lobby',   -- 1+ игрок. начался таймер до прихода ботов
+    'lobby',   -- 1+ игрок. Начался таймер до прихода ботов
     'running', -- игра играется
     'finished' -- игра завершена
 );
