@@ -10,7 +10,8 @@ router = APIRouter(prefix="/room", tags=["Room"])
 
 class SearchRequest(BaseModel):
     game: str
-    join_cost: int
+    min_cost: int
+    max_cost: int
 
 @router.post("/search")
 def search_room(
@@ -38,7 +39,7 @@ def search_room(
     #return {
     #    "room_access_token": room["access_token"]
     #}
-    result = find_room_for_user(data.game, data.join_cost)
+    result = find_room_for_user(data.game, data.min_cost, data.max_cost)
 
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])

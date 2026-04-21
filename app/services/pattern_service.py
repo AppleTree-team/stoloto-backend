@@ -65,15 +65,19 @@ def get_pattern_by_id(pattern_id: int) -> Optional[Dict[str, Any]]:
     result = fetch_one(query, (pattern_id,))
     return result
 
-def get_pattern_by_game_and_cost(game: str, join_cost: int) -> Optional[Dict]:
+def get_pattern_by_game_and_cost(game: str, min_cost: int, max_cost: int) -> Optional[Dict]:
     """
-    Возвращает паттерн комнаты для указанной игры и стоимости входа.
+    Возвращает самый дорогой паттерн комнаты для указанной игры и стоимости входа.
     """
     return fetch_one("""
         SELECT *
         FROM room_pattern
-        WHERE game = %s AND join_cost = %s AND is_active = TRUE
-    """, (game, join_cost))
+        WHERE game = %s 
+        AND join_cost BETWEEN %s AND %s
+        AND is_active = TRUE
+        ORDER BY join_cost DESC
+        LIMIT 1
+    """, (game, min_cost, max_cost))
 
 
 # =========================================
