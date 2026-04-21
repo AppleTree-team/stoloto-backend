@@ -5,7 +5,7 @@ from fastapi import Request
 import uvicorn
 
 
-from app.api import auth, profile, patterns
+from app.api import auth, profile, patterns, room
 
 import os
 from dotenv import load_dotenv
@@ -30,10 +30,9 @@ def create_app() -> FastAPI:
     # routers
     main_router = APIRouter(prefix="/api")
     main_router.include_router(auth.router, tags=["Auth"])
-    #main_router.include_router(home.router, tags=["Home"])
     main_router.include_router(profile.router, tags=["Profile"])
     main_router.include_router(patterns.router, tags=["Patterns"])
-    #main_router.include_router(room.router, tags=["Room"])
+    main_router.include_router(room.router, tags=["Room"])
 
     @_app.get("/health")
     async def health_check():

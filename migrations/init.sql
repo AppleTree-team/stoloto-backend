@@ -1,8 +1,11 @@
-
+CREATE TABLE casino_balance (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
+);
 
 CREATE TABLE system_config (
-    max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0),
-    balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0)
 );
 
 CREATE TABLE users (
@@ -15,7 +18,7 @@ CREATE TABLE users (
     is_admin BOOLEAN DEFAULT FALSE
 );
 
-CREATE TYPE games AS ENUM ('wheel', 'aviator', 'planka');
+CREATE TYPE games AS ENUM ('wheel', 'aviator', 'plinko');
 
 CREATE TABLE room_pattern (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -32,14 +35,14 @@ CREATE TABLE room_pattern (
 
     max_rooms_count INTEGER NOT NULL DEFAULT 50,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    deleted_at TIMESTAMP DEFAULT NULL,
     weight INTEGER NOT NULL DEFAULT 1
 );
 
 
 
 CREATE TYPE room_status AS ENUM (
-    'lobby',   -- 1+ игрок. Начался таймер до прихода ботов
+    'lobby',   -- начальнаое состояние,если >=1 игрок. начался таймер до прихода ботов
+    'shop',    -- этап закупки бустов и доп мест в комнате. после этого этапа добавляются боты
     'running', -- игра играется
     'finished' -- игра завершена
 );
@@ -70,41 +73,6 @@ CREATE TABLE room_members (
 );
 
 
-
-
-
-
-
-
-INSERT INTO system_config (max_active_rooms, balance) VALUES (50, 9999999999);
---ЗАЩИТА КОНФИГА КАЗИНО
--- Создаём триггерную функцию для запрета INSERT после того, как строка уже есть
-CREATE OR REPLACE FUNCTION prevent_extra_insert()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF (SELECT COUNT(*) FROM system_config) >= 1 THEN
-        RAISE EXCEPTION 'Таблица system_config уже содержит строку. INSERT запрещён.';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Создаём триггер на INSERT
-CREATE TRIGGER trg_prevent_extra_insert
-BEFORE INSERT ON system_config
-FOR EACH ROW EXECUTE FUNCTION prevent_extra_insert();
-
--- Запрещаем DELETE (навсегда)
-CREATE OR REPLACE FUNCTION prevent_delete_config()
-RETURNS TRIGGER AS $$
-BEGIN
-    RAISE EXCEPTION 'DELETE запрещён в таблице system_config (должна оставаться единственная строка).';
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_prevent_delete_config
-BEFORE DELETE ON system_config
-FOR EACH ROW EXECUTE FUNCTION prevent_delete_config();
 
 
 
@@ -146,16 +114,16 @@ INSERT INTO room_pattern (game, join_cost, max_members_count, rank, min_bots_cou
 VALUES
 ('wheel',   100, 10, 1.0, 2, 5, 60, 30),
 ('aviator', 200, 8,  1.5, 1, 4, 45, 20),
-('planka',  50,  6,  0.8, 1, 3, 30, 15);
+('plinko',  50,  6,  0.8, 1, 3, 30, 15);
 
 
 -- Заполнение комнат
 INSERT INTO rooms (room_pattern_id, created_at, started_at, ended_at, status, winner_id, websocket_access_token)
 SELECT
     (i % 3) + 1,                         -- равномерно по 3 паттернам
-    NOW() - INTERVAL '2 hours',
-    NOW() - INTERVAL '90 minutes',
-    NOW() - INTERVAL '60 minutes',
+    NOW() - INTERVAL '5 hours',
+    NOW() - INTERVAL '10 minutes',
+    NOW() - INTERVAL '15 minutes',
     'finished',
     ((i % 10) + 1),                      -- winner всегда user1–user10
     md5(random()::text)
