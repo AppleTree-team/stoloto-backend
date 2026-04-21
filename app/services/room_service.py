@@ -310,7 +310,7 @@ def get_room_by_id(room_id: int):
 def get_room_by_token(token: str) -> Optional[Dict]:
     """Возвращает id, status, game, cost комнаты по токену."""
     return fetch_one("""
-        SELECT r.id, r.status, rp.game, rp.join_cost
+        SELECT r.id, r.status, rp.game, rp.join_cost, rp.max_members_count, rp.rank
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.websocket_access_token = %s
@@ -323,7 +323,7 @@ def get_all_rooms(limit=100):
                (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as members_count
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
-        WHERE r.status IN ('lobby', 'shop', 'running')
+        WHERE r.status IN ('waiting', 'lobby', 'shop', 'running')
         ORDER BY r.created_at DESC
         LIMIT %s
     """, (limit,))
@@ -367,16 +367,24 @@ def get_room_members(room_id: int):
     """, (room_id,))
 
 
+def get_user_slots_in_room(room_id: int, user_id: int) -> List[Dict]:
+    """Возвращает все слоты пользователя в комнате с их бустами."""
+    return fetch_all("""
+        SELECT id, boost
+        FROM room_members
+        WHERE room_id = %s AND user_id = %s
+    """, (room_id, user_id))
+
 # =========================================================
 # ➕ CREATE ROOM
 # =========================================================
 
 def create_room(pattern_id: int) -> Dict:
-    """Создаёт новую комнату со статусом 'lobby' и уникальным токеном."""
+    """Создаёт новую комнату со статусом 'waiting' и уникальным токеном."""
     token = generate_websocket_token()
     room = execute_with_returning("""
         INSERT INTO rooms (room_pattern_id, websocket_access_token, status)
-        VALUES (%s, %s, 'lobby')
+        VALUES (%s, %s, 'waiting')
         RETURNING *
     """, (pattern_id, token))
     return room
