@@ -18,6 +18,7 @@ from app.services.room_service import (
     get_lobby_seconds_left,
     finish_lobby_to_shop_if_lobby,
     get_room_total_weight,
+    get_room_victory_chance,
     get_room_escrow_amount,
     start_game_if_shop,
     finish_game_and_pick_winner_if_running,
@@ -100,13 +101,20 @@ def get_room(
         raise HTTPException(status_code=404, detail="Room not found")
 
     players = get_room_members(room["id"])
+    chance = get_room_victory_chance(room["id"], profile["id"])
 
     return {
         "id": room["id"],
         "status": room["status"],
         "players": players,
         "game": room["game"],
-        "join_cost": room["join_cost"]
+        "join_cost": room["join_cost"],
+        "max_members_count": room.get("max_members_count"),
+        "members_count": chance.get("members_count") if chance.get("success") else None,
+        "free_slots": chance.get("free_slots") if chance.get("success") else None,
+        # "шанс от общего кол-ва мест" (max_members_count), а не только от текущих участников
+        "victory_chance_percent": chance.get("chance_capacity_percent") if chance.get("success") else None,
+        "victory_chance_current_percent": chance.get("chance_current_percent") if chance.get("success") else None,
     }
 
 
@@ -189,6 +197,7 @@ async def get_lobby(
                 total_pool = current_room["join_cost"] * max_members_count
                 casino_cut = int(total_pool * (float(current_room["rank"]) / 100.0))
                 prize_pool = total_pool - casino_cut
+                chance = get_room_victory_chance(current_room["id"], profile["id"])
 
                 yield sse("tick", {
                     "room_id": current_room["id"],
@@ -197,6 +206,8 @@ async def get_lobby(
                     "threshold": threshold,
                     "max_members_count": max_members_count,
                     "seconds_left": seconds_left,
+                    "victory_chance_percent": chance.get("chance_capacity_percent") if chance.get("success") else None,
+                    "victory_chance_current_percent": chance.get("chance_current_percent") if chance.get("success") else None,
                     "prize_pool": prize_pool,
                 })
                 last_tick_sent = now_mono
@@ -313,6 +324,7 @@ async def get_shop(
                 total_fund = get_room_escrow_amount(room_id)
                 casino_cut = int(total_fund * (float(current_room["rank"]) / 100.0))
                 prize_pool = total_fund - casino_cut
+                chance = get_room_victory_chance(room_id, profile["id"])
 
                 yield sse("tick", {
                     "room_id": room_id,
@@ -322,6 +334,8 @@ async def get_shop(
                     "members_count": members_count,
                     "max_members_count": max_members_count,
                     "total_weight": total_weight,
+                    "victory_chance_percent": chance.get("chance_capacity_percent") if chance.get("success") else None,
+                    "victory_chance_current_percent": chance.get("chance_current_percent") if chance.get("success") else None,
                     "prize_pool": prize_pool,
                 })
                 last_tick_sent = now_mono
@@ -406,12 +420,22 @@ def shop_buy_slot(
 @router.get("/{room_access_token}/victory_chance")
 def room_victory_chance(
     room_access_token: str,
+    profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
     """
     Возвращает все слоты и их шансы с параметром буста.
     """
-    pass
+    room = get_room_by_token(room_access_token)
+
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    result = get_room_victory_chance(room["id"], profile["id"])
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message", "Room not found"))
+
+    return {"room_id": room["id"], **result}
 
 
 

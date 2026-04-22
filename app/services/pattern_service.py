@@ -7,7 +7,7 @@ from app.db.db import fetch_one, fetch_all, execute, execute_with_returning
 # ⚙️ SYSTEM CONFIG
 # =========================================
 
-def get_max_rooms_count():
+def get_max_rooms_count() -> int:
     """
     Максимальное кол-во комнат
     """
@@ -16,13 +16,16 @@ def get_max_rooms_count():
             FROM system_config
             """
     q = fetch_one(query)
-    return q["max_active_rooms"]
+    if not q or q.get("max_active_rooms") is None:
+        return 50
+    return int(q["max_active_rooms"])
 
 
 def set_max_rooms_count(new_count):
     execute("""
             UPDATE system_config
             SET max_active_rooms = %s
+            WHERE id = 1
             """, (new_count,))
 
 # =========================================

@@ -530,6 +530,53 @@ def get_room_total_weight(room_id: int) -> int:
     return int(result["total_weight"]) if result else 0
 
 
+def get_room_victory_chance(room_id: int, user_id: int) -> Dict[str, Any]:
+    """
+    Возвращает "шанс победы" пользователя в комнате.
+
+    - current: шанс среди текущих участников (user_weight / total_weight)
+    - capacity: шанс, если считать, что свободные места будут заняты слотами с весом 1
+      (user_weight / (total_weight + free_slots)). Это то, что обычно ожидают как "процент от общего кол-ва мест".
+    """
+    row = fetch_one("""
+        SELECT
+            rp.max_members_count::int AS max_members_count,
+            (SELECT COUNT(*)::int FROM room_members WHERE room_id = %s) AS members_count,
+            (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
+            (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
+        FROM rooms r
+        JOIN room_pattern rp ON rp.id = r.room_pattern_id
+        WHERE r.id = %s
+    """, (int(room_id), int(room_id), int(room_id), int(user_id), int(room_id)))
+
+    if not row:
+        return {"success": False, "message": "Room not found"}
+
+    max_members_count = int(row.get("max_members_count") or 0)
+    members_count = int(row.get("members_count") or 0)
+    total_weight = int(row.get("total_weight") or 0)
+    user_weight = int(row.get("user_weight") or 0)
+
+    free_slots = max(0, max_members_count - members_count)
+
+    chance_current = (user_weight / total_weight) if total_weight > 0 else 0.0
+    denom_capacity = total_weight + free_slots
+    chance_capacity = (user_weight / denom_capacity) if denom_capacity > 0 else 0.0
+
+    return {
+        "success": True,
+        "max_members_count": max_members_count,
+        "members_count": members_count,
+        "free_slots": free_slots,
+        "total_weight": total_weight,
+        "user_weight": user_weight,
+        "chance_current": chance_current,
+        "chance_current_percent": chance_current * 100.0,
+        "chance_capacity": chance_capacity,
+        "chance_capacity_percent": chance_capacity * 100.0,
+    }
+
+
 def finish_lobby_to_shop_if_lobby(room_id: int, waiting_shop_stage_seconds: int) -> bool:
     """
     Переводит комнату из lobby в shop один раз.
@@ -964,7 +1011,7 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             SELECT
                 (rd.status = 'shop') AS ok_status,
                 (c.members_count < rd.max_members_count) AS ok_capacity,
-                ((c.user_weight + 1) * 2 <= (c.total_weight + 1)) AS ok_chance,
+                ((c.user_weight + 1) * 2 <= (c.total_weight + GREATEST(0, rd.max_members_count - c.members_count))) AS ok_chance,
                 rd.join_cost AS join_cost,
                 rd.max_members_count AS max_members_count,
                 c.members_count AS members_count,
@@ -1076,7 +1123,7 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
             SELECT pg_advisory_xact_lock(%s, 8)
         ),
         room_data AS (
-            SELECT r.status, rp.boost_cost_per_point
+            SELECT r.status, rp.boost_cost_per_point, rp.max_members_count
             FROM rooms r
             JOIN room_pattern rp ON rp.id = r.room_pattern_id
             WHERE r.id = %s
@@ -1089,6 +1136,7 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
         weights AS (
             SELECT
                 (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
+                (SELECT COUNT(*)::int FROM room_members WHERE room_id = %s) AS members_count,
                 (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
         ),
         allowed AS (
@@ -1096,7 +1144,7 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
                 (SELECT status = 'shop' FROM room_data) AS ok_status,
                 (SELECT COUNT(*) = 1 FROM slot WHERE user_id = %s) AS ok_owner,
                 (SELECT boost = 0 FROM slot) AS ok_unboosted,
-                ((w.user_weight + %s) * 2 <= (w.total_weight + %s)) AS ok_chance,
+                ((w.user_weight + %s) * 2 <= ((w.total_weight + GREATEST(0, (SELECT max_members_count FROM room_data) - w.members_count)) + %s)) AS ok_chance,
                 ((SELECT boost_cost_per_point FROM room_data) * %s)::bigint AS boost_cost,
                 w.total_weight AS total_weight,
                 w.user_weight AS user_weight
@@ -1164,6 +1212,7 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
         int(room_id),
         int(room_id),
         int(slot_id),
+        int(room_id),
         int(room_id),
         int(room_id),
         int(room_id),
