@@ -767,7 +767,7 @@ def get_room_by_pattern(pattern_id: int) -> Optional[Dict]:
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.room_pattern_id = %s
-        AND r.status = 'lobby'
+        AND r.status IN ('lobby', 'waiting')
         ORDER BY r.created_at ASC
     """, (pattern_id,))
 
