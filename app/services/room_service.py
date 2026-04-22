@@ -310,17 +310,17 @@ def get_room_by_id(room_id: int):
 def get_room_by_token(token: str) -> Optional[Dict]:
     """Возвращает id, status, game, cost комнаты по токену."""
     return fetch_one("""
-        SELECT r.id, r.status, rp.game, rp.join_cost, rp.max_members_count, rp.rank
+        SELECT r.*, rp.game, rp.join_cost, rp.max_members_count, rp.rank
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
-        WHERE r.websocket_access_token = %s
+        WHERE r.access_token = %s
     """, (token,))
 
 
 def get_all_rooms(limit=100):
     return fetch_all("""
-        SELECT r.id, r.status, r.created_at, rp.game, rp.join_cost,
-               (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as members_count
+        SELECT r.*, rp.game, rp.join_cost
+        (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as members_count
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.status IN ('waiting', 'lobby', 'shop', 'running')
@@ -334,7 +334,7 @@ def get_room_by_pattern(pattern_id: int) -> Optional[Dict]:
     Возвращает комнату со статусом 'lobby', имеющую хотя бы 1 свободный слот.
     """
     rooms = fetch_all("""
-        SELECT r.id, r.websocket_access_token, r.status, rp.max_members_count
+        SELECT r.*, rp.game, rp.join_cost, rp.max_members_count
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.room_pattern_id = %s

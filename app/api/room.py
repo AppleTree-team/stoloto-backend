@@ -49,7 +49,7 @@ def search_room(
         raise HTTPException(status_code=400, detail=result["message"])
 
     return {
-        "room_access_token": result["room"]["access_token"]
+        "room": result["room"]
     }
 
 
