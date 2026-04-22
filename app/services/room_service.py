@@ -448,21 +448,20 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
             (SELECT id FROM ins) AS slot_id,
             (SELECT COUNT(*)::int FROM ins) AS inserted
     """, (
-        int(room_id),
-        int(room_id),
-        int(room_id),
-        int(room_id),
-        int(user_id),
-        int(room_id),
-        int(user_id),
-        int(room_id),
-        int(user_id),
-        int(room_id),
-        int(room_id),
-        int(room_id),
-        int(user_id),
-        int(room_id),
-        int(user_id),
+        int(room_id),  # lock
+        int(room_id),  # room_data
+        int(room_id),  # existing.room_id
+        int(user_id),  # existing.user_id
+        int(room_id),  # counts.room_id
+        int(user_id),  # pay.user_id
+        int(room_id),  # ins.room_id
+        int(user_id),  # ins.user_id
+        int(room_id),  # escrow_init.room_id
+        int(room_id),  # escrow_upd.room_id
+        int(room_id),  # ledger_user.room_id
+        int(user_id),  # ledger_user.user_id
+        int(room_id),  # ledger_escrow.room_id
+        int(user_id),  # ledger_escrow.user_id
     ))
 
     if not result:
