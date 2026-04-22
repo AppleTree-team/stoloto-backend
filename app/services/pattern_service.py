@@ -75,7 +75,7 @@ def get_pattern_by_game_and_cost(game: str, min_cost: int, max_cost: int) -> Opt
         WHERE game = %s 
         AND join_cost BETWEEN %s AND %s
         AND is_active = TRUE
-        ORDER BY join_cost DESC
+        ORDER BY weight DESC, RANDOM()
         LIMIT 1
     """, (game, min_cost, max_cost))
 
