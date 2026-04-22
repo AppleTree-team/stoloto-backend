@@ -4,28 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_current_user_profile, require_session_payload
 from app.services.matchmaking_service import find_room_for_user
 from app.services.room_service import get_room_by_token, get_room_members
-#from app.services.room_service import find_room_for_user, get_room_by_token
 
-from fastapi import Request
-from fastapi.responses import StreamingResponse
-import json
+from app.models.room import SearchRequest
 
-import asyncio
-
-
-rooms_queues = {}  # room_id -> [Queue]
-room_timers = {}   # room_id -> seconds
-room_tasks = {}    # room_id -> asyncio.Task
-
-
+from typing import Optional
 
 
 router = APIRouter(prefix="/room", tags=["Room"])
+shop_router = APIRouter(prefix="", tags=["Shop"])
 
-class SearchRequest(BaseModel):
-    game: str
-    min_cost: int
-    max_cost: int
+
+
+
 
 @router.post("/search")
 def search_room(
@@ -34,7 +24,7 @@ def search_room(
     _payload: dict = Depends(require_session_payload),
 ):
     """
-    Найти (или создать) комнату для пользователя.
+    Найти (или создать не активированную комнату) комнату для пользователя.
 
     Возвращает:
         - 200: {
@@ -58,11 +48,11 @@ def search_room(
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
 
-    room = result["room"]
-
     return {
-        "room_access_token": room["websocket_access_token"]
+        "room_access_token": result["room"]["access_token"]
     }
+
+
 
 @router.get("/{room_access_token}")
 def get_room(
@@ -100,32 +90,39 @@ def get_room(
     }
 
 
-
-
-
-
-@router.get("/lobby/{room_access_token}")
+@router.get("/{room_access_token}/lobby")
 def get_lobby(
     room_access_token: str,
     profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
+    """
+        SSE Стрим начала стадии закупок
+    """
     room = get_room_by_token(room_access_token)
 
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
+    if room["status"] != "lobby":
+        raise HTTPException(status_code=400, detail="Lobby is not available now")
+
     players = get_room_members(room["id"])
+    current_players = len(players)
+    total_pool = room["join_cost"] * current_players
+    casino_cut = int(total_pool * room["rank"])
+    prize_pool = total_pool - casino_cut
 
     return {
-        "room_id": room["id"],
-        "players": players,
-        "status": room["status"]
+        "id": room["id"],
+        "game": room["game"],
+        "max_members_count": room["max_members_count"],
+        "prize_pool": prize_pool
     }
 
 
 
-@router.get("/shop/{room_access_token}")
+@shop_router.get("/")
 def get_shop(
     room_access_token: str,
     profile: dict = Depends(get_current_user_profile),
@@ -136,111 +133,83 @@ def get_shop(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # тут можешь потом заменить на реальную логику
+    if room["status"] != "shop":
+        raise HTTPException(status_code=400, detail="Shop is not available now")
+
+    players = get_room_members(room["id"])
+    current_players = len(players)
+    total_pool = room["join_cost"] * current_players
+    casino_cut = int(total_pool * room["rank"])
+    prize_pool = total_pool - casino_cut
+
     return {
-        "room_id": room["id"],
-        "items": [
-            {"id": 1, "name": "Sword", "price": 100},
-            {"id": 2, "name": "Shield", "price": 150},
-        ]
+        "id": room["id"],
+        "game": room["game"],
+        "join_cost": room["join_cost"],
+        "max_members_count": room["max_members_count"],
+        "prize_pool": prize_pool,
     }
 
 
 
 
+@shop_router.post("/buy/boost")
+def shop_buy_boost_on_slot(
+    room_access_token: str,
+    slot_id: Optional[int] = None,
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Купить буст для выбранного слота.
+    Проверяем в какой стадии находится комната,
+        если это стадия shop, и оцениваем там же нас на победу в функции pgsql
 
-async def room_timer_task(room_id: str, duration: int = 60):
-    room_timers[room_id] = duration
+    """
 
-    while room_timers[room_id] > 0:
-        await asyncio.sleep(10)
-        room_timers[room_id] -= 10
-
-        await broadcast(room_id, {
-            "type": "timer",
-            "seconds_left": room_timers[room_id]
-        })
-
-    # финальное событие
-    await broadcast(room_id, {
-        "type": "start_game"
-    })
-
-    # очистка
-    del room_timers[room_id]
-    del room_tasks[room_id]
-
-
-async def broadcast(room_id: str, message: dict):
-    if room_id not in rooms_queues:
-        return
-
-    for q in rooms_queues[room_id]:
-        await q.put(message)
-
-
-
-@router.get("/events/{room_access_token}")
-async def room_events(request: Request, room_access_token: str):
     room = get_room_by_token(room_access_token)
-
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    #room_id = str(room["id"])
-    room_id = room["id"]
+    players = get_room_members(room["id"])
 
-    queue = asyncio.Queue()
-
-    if room_id not in rooms_queues:
-        rooms_queues[room_id] = []
-
-    rooms_queues[room_id].append(queue)
-
-    lock = asyncio.Lock()
-        # 🔥 ВАЖНО: старт таймера только если его ещё нет
-    async with lock:
-        if room_id not in room_tasks:
-            room_tasks[room_id] = asyncio.create_task(
-                room_timer_task(room_id, duration=60)
-            )
-
-    async def event_generator():
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-
-                try:
-                    data = await asyncio.wait_for(queue.get(), timeout=30)
-                except asyncio.TimeoutError:
-                    yield ": keep-alive\n\n"
-                    continue
-
-                yield f"data: {json.dumps(data)}\n\n"
-
-        finally:
-            rooms_queues[room_id].remove(queue)
-
-            if not rooms_queues[room_id]:
-                del rooms_queues[room_id]
-
-                # 💥 останавливаем таймер если никого нет
-                if room_id in room_tasks:
-                    room_tasks[room_id].cancel()
-                    del room_tasks[room_id]
-
-                if room_id in room_timers:
-                    del room_timers[room_id]
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
+    print(players)
 
 
+
+
+@shop_router.post("/buy/slot")
+def shop_buy_slot(
+    room_access_token: str,
+    slot_id: Optional[int] = None,
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Купить слот для выбранного слота.
+    """
+
+    room = get_room_by_token(room_access_token)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    players = get_room_members(room["id"])
+
+    print(players)
+
+
+
+@router.get("/{room_access_token}/victory_chance")
+def room_victory_chance(
+    room_access_token: str,
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Возвращает все слоты и их шансы с параметром буста.
+    """
+    pass
+
+
+
+
+
+
+router.include_router(shop_router, prefix="/{room_access_token}/shop")

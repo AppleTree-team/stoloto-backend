@@ -12,3 +12,10 @@ class Room(BaseModel):
     status: RoomStatus = RoomStatus.waiting
     winner_id: Optional[int] = None
     websocket_access_token: str
+
+
+#room search
+class SearchRequest(BaseModel):
+    game: str
+    min_cost: int
+    max_cost: int

@@ -91,3 +91,4 @@ alembic/versions/*.pyc
 .mypy_cache/
 .pyre/
 .pytype/
+.env

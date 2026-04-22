@@ -8,7 +8,7 @@ router = APIRouter(prefix="/patterns", tags=["Patterns"])
 
 
 def check_pattern_exists(pattern_id):
-    """ Check if pattern exists """
+    """ Проверяем наличие паттерна """
     existing = pattern_service.get_pattern_by_id(pattern_id)
     if not existing or not existing["is_active"]:
         raise HTTPException(status_code=404, detail="Pattern not found")

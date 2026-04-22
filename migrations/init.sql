@@ -41,6 +41,7 @@ CREATE TABLE room_pattern (
 
 
 CREATE TYPE room_status AS ENUM (
+    'waiting'  -- комната не активна и ожидает первого игрока
     'lobby',   -- начальнаое состояние,если >=1 игрок. начался таймер до прихода ботов
     'shop',    -- этап закупки бустов и доп мест в комнате. после этого этапа добавляются боты
     'running', -- игра играется
@@ -61,7 +62,7 @@ CREATE TABLE rooms (
     status room_status NOT NULL DEFAULT 'lobby',
 
     winner_id INTEGER REFERENCES users(id),
-    websocket_access_token TEXT NOT NULL
+    access_token TEXT NOT NULL
 );
 
 CREATE TABLE room_members (
@@ -118,7 +119,7 @@ VALUES
 
 
 -- Заполнение комнат
-INSERT INTO rooms (room_pattern_id, created_at, started_at, ended_at, status, winner_id, websocket_access_token)
+INSERT INTO rooms (room_pattern_id, created_at, started_at, ended_at, status, winner_id, access_token)
 SELECT
     (i % 3) + 1,                         -- равномерно по 3 паттернам
     NOW() - INTERVAL '5 hours',
