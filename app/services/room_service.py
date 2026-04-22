@@ -318,8 +318,7 @@ def get_room_by_token(token: str) -> Optional[Dict]:
             rp.rank,
             rp.waiting_lobby_stage,
             rp.waiting_shop_stage,
-            rp.boost_cost_per_point,
-            rp.winner_payout_percent
+            rp.boost_cost_per_point
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.access_token = %s
@@ -957,8 +956,10 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 (SELECT winner_payout FROM calc),
                 jsonb_build_object(
                     'total_fund', (SELECT total_fund FROM calc),
+                    'rank_percent', (SELECT rank FROM room_data),
                     'casino_cut', (SELECT casino_cut FROM calc),
                     'prize_pool', (SELECT prize_pool FROM calc),
+                    'winner_payout_percent_applied', 100,
                     'payout_rule', 'prize_pool_after_rake'
                 )
             WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT winner_payout FROM calc) > 0
@@ -975,6 +976,8 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 jsonb_build_object(
                     'total_fund', (SELECT total_fund FROM calc),
                     'casino_cut', (SELECT casino_cut FROM calc),
+                    'rank_percent', (SELECT rank FROM room_data),
+                    'winner_payout_percent_applied', 100,
                     'winner_payout', (SELECT winner_payout FROM calc)
                 )
             WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT total_fund FROM calc) > 0
@@ -991,6 +994,8 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 jsonb_build_object(
                     'total_fund', (SELECT total_fund FROM calc),
                     'winner_payout', (SELECT winner_payout FROM calc),
+                    'rank_percent', (SELECT rank FROM room_data),
+                    'winner_payout_percent_applied', 100,
                     'casino_income', (SELECT (total_fund - winner_payout) FROM calc)
                 )
             WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT total_fund FROM calc) > 0

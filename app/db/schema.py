@@ -19,7 +19,16 @@ _DDL: Iterable[str] = (
     """,
     """
     ALTER TABLE room_pattern
-    ADD COLUMN IF NOT EXISTS winner_payout_percent INTEGER NOT NULL DEFAULT 80 CHECK (winner_payout_percent BETWEEN 0 AND 100)
+    ADD COLUMN IF NOT EXISTS winner_payout_percent INTEGER NOT NULL DEFAULT 100 CHECK (winner_payout_percent BETWEEN 0 AND 100)
+    """,
+    """
+    ALTER TABLE room_pattern
+    ALTER COLUMN winner_payout_percent SET DEFAULT 100
+    """,
+    """
+    UPDATE room_pattern
+    SET winner_payout_percent = 100
+    WHERE winner_payout_percent = 80
     """,
     """
     CREATE TABLE IF NOT EXISTS room_escrow (

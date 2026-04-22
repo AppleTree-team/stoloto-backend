@@ -93,7 +93,7 @@ def create_pattern(data: Dict[str, Any]) -> int:
     Создаёт новый паттерн (всегда новая запись)
     """
     data.setdefault("boost_cost_per_point", 10)
-    data.setdefault("winner_payout_percent", 80)
+    data.setdefault("winner_payout_percent", 100)
     query = """
         INSERT INTO room_pattern (
             game,

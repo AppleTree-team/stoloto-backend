@@ -37,7 +37,7 @@ CREATE TABLE room_pattern (
 
     -- Финансы
     boost_cost_per_point BIGINT NOT NULL DEFAULT 10 CHECK (boost_cost_per_point >= 0),
-    winner_payout_percent INTEGER NOT NULL DEFAULT 80 CHECK (winner_payout_percent BETWEEN 0 AND 100)
+    winner_payout_percent INTEGER NOT NULL DEFAULT 100 CHECK (winner_payout_percent BETWEEN 0 AND 100)
 );
 
 INSERT INTO system_config (id, max_active_rooms, casino_balance)
@@ -136,9 +136,9 @@ FROM generate_series(1, 100) AS i;
 -- Заполнение таблицы паттернов
 INSERT INTO room_pattern (game, join_cost, max_members_count, rank, min_bots_count, max_bots_count, waiting_lobby_stage, waiting_shop_stage, boost_cost_per_point, winner_payout_percent)
 VALUES
-('wheel',   100, 10, 20.0, 2, 5, 60, 30, 10, 80),
-('aviator', 200, 8,  20.0, 1, 4, 45, 20, 10, 80),
-('plinko',  50,  6,  20.0, 1, 3, 30, 15, 10, 80);
+('wheel',   100, 10, 20.0, 2, 5, 60, 30, 10, 100),
+('aviator', 200, 8,  20.0, 1, 4, 45, 20, 10, 100),
+('plinko',  50,  6,  20.0, 1, 3, 30, 15, 10, 100);
 
 
 -- Заполнение комнат
