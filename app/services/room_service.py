@@ -735,10 +735,10 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
             RETURNING id
         ),
         upd_casino AS (
-            UPDATE casino_balance
-            SET balance = balance + (SELECT (total_fund - winner_payout) FROM calc)
+            UPDATE system_config
+            SET casino_balance = casino_balance + (SELECT (total_fund - winner_payout) FROM calc)
             WHERE id = 1 AND EXISTS (SELECT 1 FROM upd_room)
-            RETURNING balance
+            RETURNING casino_balance
         ),
         escrow_zero AS (
             UPDATE room_escrow

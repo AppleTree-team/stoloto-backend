@@ -185,7 +185,8 @@ async def get_lobby(
 
             now_mono = time.monotonic()
             if now_mono - last_tick_sent >= 10:
-                total_pool = current_room["join_cost"] * members_count
+                # В лобби показываем потенциальный приз при полном заполнении комнаты
+                total_pool = current_room["join_cost"] * max_members_count
                 casino_cut = int(total_pool * (float(current_room["rank"]) / 100.0))
                 prize_pool = total_pool - casino_cut
 

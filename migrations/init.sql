@@ -3,9 +3,14 @@ CREATE TABLE casino_balance (
     balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
 );
 
+INSERT INTO casino_balance (id, balance)
+VALUES (1, 0)
+ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE system_config (
     id INTEGER PRIMARY KEY DEFAULT 1,
-    max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0)
+    max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0),
+    casino_balance BIGINT NOT NULL DEFAULT 0 CHECK (casino_balance >= 0)
 );
 
 CREATE TABLE users (
@@ -24,6 +29,7 @@ CREATE TABLE room_pattern (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     game games NOT NULL,
     join_cost BIGINT NOT NULL CHECK (join_cost > 0),
+    deleted_at TIMESTAMP,
 
     max_members_count INTEGER NOT NULL DEFAULT 10,
     rank FLOAT NOT NULL,
@@ -41,6 +47,10 @@ CREATE TABLE room_pattern (
     boost_cost_per_point BIGINT NOT NULL DEFAULT 10 CHECK (boost_cost_per_point >= 0),
     winner_payout_percent INTEGER NOT NULL DEFAULT 80 CHECK (winner_payout_percent BETWEEN 0 AND 100)
 );
+
+INSERT INTO system_config (id, max_active_rooms, casino_balance)
+VALUES (1, 50, 0)
+ON CONFLICT (id) DO NOTHING;
 
 
 

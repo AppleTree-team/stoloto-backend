@@ -6,6 +6,14 @@ from app.db.db import get_connection
 
 _DDL: Iterable[str] = (
     """
+    ALTER TABLE system_config
+    ADD COLUMN IF NOT EXISTS casino_balance BIGINT NOT NULL DEFAULT 0 CHECK (casino_balance >= 0)
+    """,
+    """
+    ALTER TABLE room_pattern
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP
+    """,
+    """
     ALTER TABLE room_pattern
     ADD COLUMN IF NOT EXISTS boost_cost_per_point BIGINT NOT NULL DEFAULT 10 CHECK (boost_cost_per_point >= 0)
     """,
@@ -33,9 +41,26 @@ _DDL: Iterable[str] = (
     )
     """,
     """
-    INSERT INTO casino_balance (id, balance)
-    VALUES (1, 0)
+    INSERT INTO system_config (id, max_active_rooms, casino_balance)
+    VALUES (1, 50, 0)
     ON CONFLICT (id) DO NOTHING
+    """,
+    """
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'casino_balance'
+      ) THEN
+        UPDATE system_config
+        SET casino_balance = GREATEST(
+          casino_balance,
+          COALESCE((SELECT balance FROM casino_balance WHERE id = 1), 0)
+        )
+        WHERE id = 1;
+      END IF;
+    END $$;
     """,
 )
 
@@ -58,4 +83,3 @@ def ensure_schema(retries: int = 10, delay_seconds: float = 0.5) -> None:
             time.sleep(delay_seconds)
     if last_error:
         raise last_error
-
