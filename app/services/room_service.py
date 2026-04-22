@@ -383,7 +383,7 @@ def create_room(pattern_id: int) -> Dict:
     """Создаёт новую комнату со статусом 'waiting' и уникальным токеном."""
     token = generate_websocket_token()
     room = execute_with_returning("""
-        INSERT INTO rooms (room_pattern_id, websocket_access_token, status)
+        INSERT INTO rooms (room_pattern_id, access_token, status)
         VALUES (%s, %s, 'waiting')
         RETURNING *
     """, (pattern_id, token))
