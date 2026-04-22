@@ -310,11 +310,139 @@ def get_room_by_id(room_id: int):
 def get_room_by_token(token: str) -> Optional[Dict]:
     """Возвращает id, status, game, cost комнаты по токену."""
     return fetch_one("""
-        SELECT r.*, rp.game, rp.join_cost, rp.max_members_count, rp.rank
+        SELECT
+            r.*,
+            rp.game,
+            rp.join_cost,
+            rp.max_members_count,
+            rp.rank,
+            rp.waiting_lobby_stage
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.access_token = %s
     """, (token,))
+
+
+def start_lobby_if_waiting(room_id: int, waiting_lobby_stage_seconds: int) -> bool:
+    """
+    Если комната в статусе waiting — переводит в lobby и выставляет started_at как
+    (текущее время + waiting_lobby_stage).
+
+    Возвращает True, если статус реально изменился.
+    """
+    result = execute_with_returning("""
+        UPDATE rooms
+        SET status = 'lobby',
+            started_at = NOW() + (%s * INTERVAL '1 second')
+        WHERE id = %s AND status = 'waiting'
+        RETURNING id
+    """, (int(waiting_lobby_stage_seconds or 0), room_id))
+    return bool(result)
+
+
+def set_lobby_timer_if_missing(room_id: int, waiting_lobby_stage_seconds: int) -> bool:
+    """
+    Если комната уже в lobby, но таймер не выставлен (started_at IS NULL) —
+    выставляет started_at = NOW() + waiting_lobby_stage.
+
+    Возвращает True, если started_at был установлен в этом вызове.
+    """
+    result = execute_with_returning("""
+        UPDATE rooms
+        SET started_at = NOW() + (%s * INTERVAL '1 second')
+        WHERE id = %s AND status = 'lobby' AND started_at IS NULL
+        RETURNING id
+    """, (int(waiting_lobby_stage_seconds or 0), room_id))
+    return bool(result)
+
+
+def ensure_user_added_to_room_once(room_id: int, user_id: int) -> bool:
+    """
+    Добавляет пользователя в room_members ровно один раз (как 1 слот), даже при
+    повторных запросах / при конкурентных вызовах.
+
+    При этом пользователь может добавлять дополнительные слоты другими эндпоинтами.
+    Возвращает True, если слот был создан в этом вызове.
+    """
+    result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 0)
+        ),
+        room_data AS (
+            SELECT r.status, rp.max_members_count
+            FROM rooms r
+            JOIN room_pattern rp ON rp.id = r.room_pattern_id
+            WHERE r.id = %s
+        ),
+        ins AS (
+            INSERT INTO room_members (room_id, user_id, boost)
+            SELECT %s, %s, 0
+            FROM room_data rd
+            WHERE rd.status IN ('waiting', 'lobby')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM room_members
+                  WHERE room_id = %s AND user_id = %s
+              )
+              AND (SELECT COUNT(*) FROM room_members WHERE room_id = %s) < rd.max_members_count
+            RETURNING 1
+        )
+        SELECT COUNT(*)::int AS inserted
+        FROM ins
+    """, (
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(user_id),
+        int(room_id),
+        int(user_id),
+        int(room_id),
+    ))
+    return bool(result and result.get("inserted"))
+
+
+def get_room_members_count(room_id: int) -> int:
+    result = fetch_one("""
+        SELECT COUNT(*)::int AS cnt
+        FROM room_members
+        WHERE room_id = %s
+    """, (room_id,))
+    return int(result["cnt"]) if result else 0
+
+
+def get_lobby_seconds_left(room_id: int) -> Optional[int]:
+    """
+    Возвращает оставшееся время лобби (started_at - NOW()) в секундах.
+    None если started_at не установлен.
+    """
+    result = fetch_one("""
+        SELECT
+            CASE
+                WHEN started_at IS NULL THEN NULL
+                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (started_at - NOW())))::int)
+            END AS seconds_left
+        FROM rooms
+        WHERE id = %s
+    """, (room_id,))
+    if not result:
+        return None
+    return result["seconds_left"]
+
+
+def finish_lobby_to_shop_if_lobby(room_id: int) -> bool:
+    """
+    Переводит комнату из lobby в shop один раз.
+    started_at ставим в NOW() (как "момент окончания лобби"), чтобы клиенты с
+    таймером не продолжали видеть старое будущее значение.
+    """
+    result = execute_with_returning("""
+        UPDATE rooms
+        SET status = 'shop',
+            started_at = NOW()
+        WHERE id = %s AND status = 'lobby'
+        RETURNING id
+    """, (room_id,))
+    return bool(result)
 
 
 def get_all_rooms(limit=100):

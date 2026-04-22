@@ -1,9 +1,23 @@
+import asyncio
+import json
+import time
+
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_current_user_profile, require_session_payload
 from app.services.matchmaking_service import find_room_for_user
-from app.services.room_service import get_room_by_token, get_room_members
+from app.services.room_service import (
+    get_room_by_token,
+    get_room_members,
+    start_lobby_if_waiting,
+    ensure_user_added_to_room_once,
+    set_lobby_timer_if_missing,
+    get_room_members_count,
+    get_lobby_seconds_left,
+    finish_lobby_to_shop_if_lobby,
+)
 
 from app.models.room import SearchRequest
 
@@ -91,8 +105,9 @@ def get_room(
 
 
 @router.get("/{room_access_token}/lobby")
-def get_lobby(
+async def get_lobby(
     room_access_token: str,
+    request: Request,
     profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
@@ -104,21 +119,87 @@ def get_lobby(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    if room["status"] != "lobby":
+    if room["status"] == "waiting":
+        start_lobby_if_waiting(room["id"], room.get("waiting_lobby_stage", 0))
+        room = get_room_by_token(room_access_token)
+
+    if room["status"] == "lobby" and not room.get("started_at"):
+        set_lobby_timer_if_missing(room["id"], room.get("waiting_lobby_stage", 0))
+        room = get_room_by_token(room_access_token)
+
+    if room["status"] not in ("lobby", "shop"):
         raise HTTPException(status_code=400, detail="Lobby is not available now")
 
-    players = get_room_members(room["id"])
-    current_players = len(players)
-    total_pool = room["join_cost"] * current_players
-    casino_cut = int(total_pool * room["rank"])
-    prize_pool = total_pool - casino_cut
+    if room["status"] == "lobby":
+        ensure_user_added_to_room_once(room["id"], profile["id"])
 
-    return {
-        "id": room["id"],
-        "game": room["game"],
-        "max_members_count": room["max_members_count"],
-        "prize_pool": prize_pool
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+    async def event_generator():
+        last_tick_sent = 0.0
+        while True:
+            if await request.is_disconnected():
+                break
+
+            current_room = get_room_by_token(room_access_token)
+            if not current_room:
+                yield sse("error", {"detail": "Room not found"})
+                break
+
+            if current_room["status"] != "lobby":
+                yield sse("lobby_end", {"status": current_room["status"], "room_id": current_room["id"]})
+                break
+
+            members_count = get_room_members_count(current_room["id"])
+            max_members_count = int(current_room.get("max_members_count") or 0)
+            threshold = max(2, (max_members_count + 1) // 2)
+
+            seconds_left = get_lobby_seconds_left(current_room["id"])
+
+            should_end_by_members = members_count >= threshold
+            should_end_by_timer = seconds_left == 0
+
+            if should_end_by_members or should_end_by_timer:
+                finish_lobby_to_shop_if_lobby(current_room["id"])
+                updated_room = get_room_by_token(room_access_token)
+                reason = "members" if should_end_by_members else "timer"
+                yield sse("lobby_end", {
+                    "status": updated_room["status"] if updated_room else "shop",
+                    "room_id": current_room["id"],
+                    "members_count": members_count,
+                    "threshold": threshold,
+                    "max_members_count": max_members_count,
+                    "seconds_left": seconds_left,
+                    "reason": reason,
+                })
+                break
+
+            now_mono = time.monotonic()
+            if now_mono - last_tick_sent >= 10:
+                total_pool = current_room["join_cost"] * members_count
+                casino_cut = int(total_pool * current_room["rank"])
+                prize_pool = total_pool - casino_cut
+
+                yield sse("tick", {
+                    "room_id": current_room["id"],
+                    "status": current_room["status"],
+                    "members_count": members_count,
+                    "threshold": threshold,
+                    "max_members_count": max_members_count,
+                    "seconds_left": seconds_left,
+                    "prize_pool": prize_pool,
+                })
+                last_tick_sent = now_mono
+
+            await asyncio.sleep(1)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
     }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
 
 
