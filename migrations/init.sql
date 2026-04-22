@@ -143,43 +143,6 @@ VALUES
 ('plinko',  50,  6,  20.0, 1, 3, 30, 15, 10, 100);
 
 
--- Заполнение комнат
-INSERT INTO rooms (room_pattern_id, created_at, started_at, ended_at, status, winner_id, access_token)
-SELECT
-    (i % 3) + 1,                         -- равномерно по 3 паттернам
-    NOW() - INTERVAL '5 hours',
-    NOW() - INTERVAL '10 minutes',
-    NOW() - INTERVAL '15 minutes',
-    'finished',
-    ((i % 10) + 1),                      -- winner всегда user1–user10
-    md5(random()::text)
-FROM generate_series(1, 100) AS i;
-
-
--- Заполнение участников комнат
-INSERT INTO room_members (room_id, user_id, boost)
-SELECT
-    r.id,
-    u.user_id,
-    (ARRAY[0, 5, 10, 15])[floor(random() * 4 + 1)] AS boost
-FROM rooms r
-JOIN LATERAL (
-    SELECT DISTINCT user_id
-    FROM (
-        -- победитель ОБЯЗАТЕЛЬНО
-        SELECT r.winner_id AS user_id
-
-        UNION
-
-        -- + ещё 2–4 случайных игрока из топ-10
-        SELECT (floor(random() * 10) + 1)::int
-        FROM generate_series(1, 4)
-    ) t
-) u ON TRUE
-WHERE r.status = 'finished';
-
-
-
 
 
 

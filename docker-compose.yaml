@@ -9,10 +9,13 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: casino_postgres
+    command: postgres -c timezone=${DB_TIMEZONE:-Europe/Moscow} -c log_timezone=${DB_TIMEZONE:-Europe/Moscow}
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+      TZ: ${DB_TIMEZONE:-Europe/Moscow}
+      PGTZ: ${DB_TIMEZONE:-Europe/Moscow}
     ports:
       - "5498:5432"
     volumes:
@@ -34,6 +37,7 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      DB_TIMEZONE: ${DB_TIMEZONE:-Europe/Moscow}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM}
       ACCESS_TOKEN_EXPIRE_HOURS: ${ACCESS_TOKEN_EXPIRE_HOURS}

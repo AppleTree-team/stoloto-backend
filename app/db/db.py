@@ -5,12 +5,14 @@ from app.db.db_config import DB_CONFIG
 
 
 def get_connection():
+    timezone = DB_CONFIG.get("timezone") or "Europe/Moscow"
     return psycopg2.connect(
         host=DB_CONFIG["host"],
         database=DB_CONFIG["database"],
         user=DB_CONFIG["user"],
         password=DB_CONFIG["password"],
-        port=DB_CONFIG["port"]
+        port=DB_CONFIG["port"],
+        options=f"-c timezone={timezone}"
     )
 
 

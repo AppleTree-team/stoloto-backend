@@ -9,4 +9,5 @@ DB_CONFIG = {
     "database": os.getenv("DB_NAME"),
     "user":     os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
+    "timezone": os.getenv("DB_TIMEZONE", "Europe/Moscow"),
 }
