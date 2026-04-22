@@ -3,14 +3,10 @@ CREATE TABLE casino_balance (
     balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
 );
 
-INSERT INTO casino_balance (id, balance)
-VALUES (1, 0)
-ON CONFLICT (id) DO NOTHING;
-
 CREATE TABLE system_config (
     id INTEGER PRIMARY KEY DEFAULT 1,
     max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0),
-    casino_balance BIGINT NOT NULL DEFAULT 0 CHECK (casino_balance >= 0)
+    casino_balance BIGINT NOT NULL DEFAULT 999999999 CHECK (casino_balance >= 0)
 );
 
 CREATE TABLE users (
@@ -23,7 +19,7 @@ CREATE TABLE users (
     is_admin BOOLEAN DEFAULT FALSE
 );
 
-CREATE TYPE games AS ENUM ('wheel', 'aviator', 'plinko');
+CREATE TYPE games AS ENUM ('wheel', 'aviator', 'plinko', 'minesweeper');
 
 CREATE TABLE room_pattern (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

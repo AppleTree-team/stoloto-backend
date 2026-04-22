@@ -688,7 +688,7 @@ def finish_shop_and_pick_winner(room_id: int) -> Optional[Dict[str, Any]]:
     return result
 
 
-def start_game_if_shop(room_id: int) -> bool:
+def start_game_if_shop(room_id: int) -> Dict[str, Any]:
     """
     Переводит комнату из shop в running (старт игры) один раз.
     """
@@ -733,8 +733,8 @@ def start_game_if_shop(room_id: int) -> bool:
                 cfg.casino_balance::bigint AS casino_balance,
                 GREATEST(0, COALESCE(rd.max_members_count, 0) - c.members_count)::int AS free_slots,
                 LEAST(
-                    GREATEST(0, COALESCE(rd.max_members_count, 0) - c.members_count)::int,
-                    CASE WHEN COALESCE(rd.join_cost, 0) > 0 THEN (cfg.casino_balance / rd.join_cost)::int ELSE 0 END
+                    GREATEST(0, COALESCE(rd.max_members_count, 0) - c.members_count)::bigint,
+                    CASE WHEN COALESCE(rd.join_cost, 0) > 0 THEN (cfg.casino_balance / rd.join_cost) ELSE 0 END
                 )::int AS fill_slots
             FROM anchor a
             LEFT JOIN room_data rd ON TRUE
@@ -814,8 +814,17 @@ def start_game_if_shop(room_id: int) -> bool:
               AND EXISTS (SELECT 1 FROM room_members WHERE room_id = %s)
             RETURNING id
         )
-        SELECT id
-        FROM upd_room
+        SELECT
+            (SELECT id FROM upd_room) AS id,
+            (SELECT ok_shop FROM to_fill) AS ok_shop,
+            (SELECT members_count FROM to_fill) AS members_before,
+            (SELECT free_slots FROM to_fill) AS free_slots,
+            (SELECT fill_slots FROM to_fill) AS fill_slots,
+            (SELECT max_members_count FROM to_fill) AS max_members_count,
+            (SELECT bots_added FROM cost) AS bots_added,
+            (SELECT total_cost FROM cost) AS total_cost,
+            (SELECT amount FROM escrow_upd) AS escrow_amount_after
+        FROM to_fill
     """, (
         int(room_id),  # lock
         int(room_id),  # room_data
@@ -829,7 +838,20 @@ def start_game_if_shop(room_id: int) -> bool:
         int(room_id),  # upd_room
         int(room_id),  # upd_room exists
     ))
-    return bool(result)
+    if not result:
+        return {
+            "success": False,
+            "room_id": int(room_id),
+            "started": False,
+            "message": "Room not found",
+        }
+
+    return {
+        "success": True,
+        "room_id": int(room_id),
+        "started": bool(result.get("id")),
+        **result,
+    }
 
 
 def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, Any]]:

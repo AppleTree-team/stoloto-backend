@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 from typing import Optional
 
@@ -22,6 +23,9 @@ if redis.call("GET", KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+
+
+logger = logging.getLogger(__name__)
 
 
 class StageManager:
@@ -76,7 +80,7 @@ class StageManager:
             except asyncio.CancelledError:
                 break
             except Exception:
-                # Don't crash the app on background errors.
+                logger.exception("Stage manager tick failed")
                 await asyncio.sleep(1)
 
     def _tick_sync(self) -> None:
@@ -86,7 +90,17 @@ class StageManager:
 
         shop_rooms = get_shop_rooms_due(limit=200)
         for room in shop_rooms:
-            start_game_if_shop(room["id"])
+            start_result = start_game_if_shop(room["id"])
+            if start_result.get("success") and start_result.get("started"):
+                logger.info(
+                    "Started room %s with bots_added=%s free_slots=%s fill_slots=%s",
+                    room["id"],
+                    start_result.get("bots_added"),
+                    start_result.get("free_slots"),
+                    start_result.get("fill_slots"),
+                )
+            else:
+                logger.warning("Room %s was not started from shop: %s", room["id"], start_result)
             finish_game_and_pick_winner_if_running(room["id"])
 
 

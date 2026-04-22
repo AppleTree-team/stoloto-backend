@@ -306,8 +306,25 @@ async def get_shop(
                 last_total_weight = total_weight
 
             if seconds_left == 0:
-                start_game_if_shop(room_id)
-                yield sse("game_start", {"room_id": room_id, "status": "running"})
+                start_result = start_game_if_shop(room_id)
+                updated_after_start = get_room_by_token(room_access_token)
+                started = bool(start_result.get("started")) or bool(updated_after_start and updated_after_start.get("status") == "running")
+
+                if not started:
+                    yield sse("error", {
+                        "detail": "Failed to start room from shop",
+                        "room_id": room_id,
+                        "start_result": start_result,
+                    })
+                    break
+
+                yield sse("game_start", {
+                    "room_id": room_id,
+                    "status": "running",
+                    "bots_added": start_result.get("bots_added", 0),
+                    "free_slots_before": start_result.get("free_slots"),
+                    "fill_slots": start_result.get("fill_slots"),
+                })
 
                 result = finish_game_and_pick_winner_if_running(room_id)
                 updated = get_room_by_token(room_access_token)
