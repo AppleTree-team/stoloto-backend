@@ -1,4 +1,11 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: casino_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   postgres:
     image: postgres:15-alpine
     container_name: casino_postgres
@@ -30,6 +37,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM}
       ACCESS_TOKEN_EXPIRE_HOURS: ${ACCESS_TOKEN_EXPIRE_HOURS}
+      REDIS_URL: ${REDIS_URL}
     ports:
       - "${APP_PORT:-8000}:8000"
     healthcheck:
@@ -39,6 +47,7 @@ services:
       retries: 3
     depends_on:
       - postgres
+      - redis
       #postgres:
       #  condition: service_healthy
     restart: unless-stopped

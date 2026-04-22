@@ -11,6 +11,8 @@ def get_max_rooms_count():
     """
     Максимальное кол-во комнат
     """
+    data.setdefault("boost_cost_per_point", 10)
+    data.setdefault("winner_payout_percent", 80)
     query = """
             SELECT max_active_rooms
             FROM system_config
@@ -100,7 +102,9 @@ def create_pattern(data: Dict[str, Any]) -> int:
             waiting_shop_stage,
             max_rooms_count,
             is_active,
-            weight
+            weight,
+            boost_cost_per_point,
+            winner_payout_percent
         )
         VALUES (
             %(game)s,
@@ -113,7 +117,9 @@ def create_pattern(data: Dict[str, Any]) -> int:
             %(waiting_shop_stage)s,
             %(max_rooms_count)s,
             TRUE,
-            %(weight)s
+            %(weight)s,
+            %(boost_cost_per_point)s,
+            %(winner_payout_percent)s
         )
         RETURNING id
     """

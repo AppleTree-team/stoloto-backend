@@ -6,6 +6,8 @@ import uvicorn
 
 
 from app.api import auth, profile, patterns, room
+from app.services.stage_manager import stage_manager
+from app.db.schema import ensure_schema
 
 import os
 from dotenv import load_dotenv
@@ -37,6 +39,15 @@ def create_app() -> FastAPI:
     @_app.get("/health")
     async def health_check():
         return {"status": "ok"}
+
+    @_app.on_event("startup")
+    async def _startup() -> None:
+        ensure_schema()
+        await stage_manager.start()
+
+    @_app.on_event("shutdown")
+    async def _shutdown() -> None:
+        await stage_manager.stop()
 
     _app.include_router(main_router)
     return _app

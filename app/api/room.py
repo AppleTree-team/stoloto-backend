@@ -18,6 +18,7 @@ from app.services.room_service import (
     get_lobby_seconds_left,
     finish_lobby_to_shop_if_lobby,
     get_room_total_weight,
+    get_room_escrow_amount,
     start_game_if_shop,
     finish_game_and_pick_winner_if_running,
     shop_buy_slot as shop_buy_slot_service,
@@ -136,7 +137,9 @@ async def get_lobby(
         raise HTTPException(status_code=400, detail="Lobby is not available now")
 
     if room["status"] == "lobby":
-        ensure_user_added_to_room_once(room["id"], profile["id"])
+        join_result = ensure_user_added_to_room_once(room["id"], profile["id"])
+        if not join_result.get("success"):
+            raise HTTPException(status_code=400, detail=join_result.get("message", "Join failed"))
 
     def sse(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
@@ -183,7 +186,7 @@ async def get_lobby(
             now_mono = time.monotonic()
             if now_mono - last_tick_sent >= 10:
                 total_pool = current_room["join_cost"] * members_count
-                casino_cut = int(total_pool * current_room["rank"])
+                casino_cut = int(total_pool * (float(current_room["rank"]) / 100.0))
                 prize_pool = total_pool - casino_cut
 
                 yield sse("tick", {
@@ -306,9 +309,9 @@ async def get_shop(
 
             now_mono = time.monotonic()
             if now_mono - last_tick_sent >= 10:
-                total_pool = current_room["join_cost"] * members_count
-                casino_cut = int(total_pool * current_room["rank"])
-                prize_pool = total_pool - casino_cut
+                total_fund = get_room_escrow_amount(room_id)
+                casino_cut = int(total_fund * (float(current_room["rank"]) / 100.0))
+                prize_pool = total_fund - casino_cut
 
                 yield sse("tick", {
                     "room_id": room_id,

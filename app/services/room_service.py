@@ -317,7 +317,9 @@ def get_room_by_token(token: str) -> Optional[Dict]:
             rp.max_members_count,
             rp.rank,
             rp.waiting_lobby_stage,
-            rp.waiting_shop_stage
+            rp.waiting_shop_stage,
+            rp.boost_cost_per_point,
+            rp.winner_payout_percent
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.access_token = %s
@@ -357,49 +359,139 @@ def set_lobby_timer_if_missing(room_id: int, waiting_lobby_stage_seconds: int) -
     return bool(result)
 
 
-def ensure_user_added_to_room_once(room_id: int, user_id: int) -> bool:
+def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]:
     """
-    Добавляет пользователя в room_members ровно один раз (как 1 слот), даже при
-    повторных запросах / при конкурентных вызовах.
+    Добавляет пользователя в комнату (1 слот) ровно один раз и списывает стоимость входа.
+    Идемпотентно и безопасно при конкурентных вызовах.
 
-    При этом пользователь может добавлять дополнительные слоты другими эндпоинтами.
-    Возвращает True, если слот был создан в этом вызове.
+    Возвращает:
+      - success: bool
+      - inserted: bool (создан ли слот в этом вызове)
+      - already_joined: bool
+      - message: str (если success=False)
     """
     result = execute_with_returning("""
         WITH locked AS (
-            SELECT pg_advisory_xact_lock(%s, 0)
+            SELECT pg_advisory_xact_lock(%s, 1)
         ),
         room_data AS (
-            SELECT r.status, rp.max_members_count
+            SELECT r.status, rp.max_members_count, rp.join_cost
             FROM rooms r
             JOIN room_pattern rp ON rp.id = r.room_pattern_id
             WHERE r.id = %s
         ),
+        existing AS (
+            SELECT rm.id
+            FROM room_members rm
+            WHERE rm.room_id = %s AND rm.user_id = %s
+            LIMIT 1
+        ),
+        counts AS (
+            SELECT (SELECT COUNT(*)::int FROM room_members WHERE room_id = %s) AS members_count
+        ),
+        allowed AS (
+            SELECT
+                (rd.status IN ('waiting', 'lobby')) AS ok_status,
+                (c.members_count < rd.max_members_count) AS ok_capacity,
+                rd.join_cost AS join_cost
+            FROM room_data rd, counts c
+        ),
+        pay AS (
+            UPDATE users
+            SET balance = balance - (SELECT join_cost FROM allowed)
+            WHERE id = %s
+              AND is_bot = FALSE
+              AND balance >= (SELECT join_cost FROM allowed)
+              AND NOT EXISTS (SELECT 1 FROM existing)
+              AND (SELECT ok_status AND ok_capacity FROM allowed)
+            RETURNING id
+        ),
         ins AS (
             INSERT INTO room_members (room_id, user_id, boost)
             SELECT %s, %s, 0
-            FROM room_data rd
-            WHERE rd.status IN ('waiting', 'lobby')
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM room_members
-                  WHERE room_id = %s AND user_id = %s
-              )
-              AND (SELECT COUNT(*) FROM room_members WHERE room_id = %s) < rd.max_members_count
+            WHERE EXISTS (SELECT 1 FROM pay)
+            RETURNING id
+        ),
+        escrow_init AS (
+            INSERT INTO room_escrow (room_id, amount)
+            VALUES (%s, 0)
+            ON CONFLICT (room_id) DO NOTHING
+        ),
+        escrow_upd AS (
+            UPDATE room_escrow
+            SET amount = amount + (SELECT join_cost FROM allowed),
+                updated_at = NOW()
+            WHERE room_id = %s AND EXISTS (SELECT 1 FROM ins)
+            RETURNING amount
+        ),
+        ledger_user AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s, %s, 'user', 'join', -(SELECT join_cost FROM allowed),
+                jsonb_build_object('slot_id', (SELECT id FROM ins), 'kind', 'join')
+            WHERE EXISTS (SELECT 1 FROM ins)
+            RETURNING 1
+        ),
+        ledger_escrow AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s, %s, 'escrow', 'join', (SELECT join_cost FROM allowed),
+                jsonb_build_object('slot_id', (SELECT id FROM ins), 'kind', 'join')
+            WHERE EXISTS (SELECT 1 FROM ins)
             RETURNING 1
         )
-        SELECT COUNT(*)::int AS inserted
-        FROM ins
+        SELECT
+            (EXISTS (SELECT 1 FROM existing)) AS already_joined,
+            (SELECT ok_status FROM allowed) AS ok_status,
+            (SELECT ok_capacity FROM allowed) AS ok_capacity,
+            (SELECT join_cost FROM allowed) AS join_cost,
+            (SELECT id FROM ins) AS slot_id,
+            (SELECT COUNT(*)::int FROM ins) AS inserted
     """, (
         int(room_id),
         int(room_id),
         int(room_id),
+        int(room_id),
+        int(user_id),
+        int(room_id),
         int(user_id),
         int(room_id),
         int(user_id),
         int(room_id),
+        int(room_id),
+        int(room_id),
+        int(user_id),
+        int(room_id),
+        int(user_id),
     ))
-    return bool(result and result.get("inserted"))
+
+    if not result:
+        return {"success": False, "message": "Room not found"}
+
+    if result.get("already_joined"):
+        return {"success": True, "inserted": False, "already_joined": True}
+
+    ok_status = bool(result.get("ok_status"))
+    ok_capacity = bool(result.get("ok_capacity"))
+    inserted = bool(result.get("inserted"))
+
+    if inserted:
+        return {"success": True, "inserted": True, "already_joined": False, "slot_id": result.get("slot_id")}
+
+    if not ok_status:
+        return {"success": False, "message": "Room is not joinable now"}
+    if not ok_capacity:
+        return {"success": False, "message": "No free slots"}
+    return {"success": False, "message": "Not enough balance"}
+
+
+def get_room_escrow_amount(room_id: int) -> int:
+    result = fetch_one("""
+        SELECT amount
+        FROM room_escrow
+        WHERE room_id = %s
+    """, (room_id,))
+    return int(result["amount"]) if result else 0
 
 
 def get_room_members_count(room_id: int) -> int:
@@ -452,6 +544,58 @@ def finish_lobby_to_shop_if_lobby(room_id: int, waiting_shop_stage_seconds: int)
         RETURNING id
     """, (int(waiting_shop_stage_seconds or 0), room_id))
     return bool(result)
+
+
+def get_lobby_rooms_ready_for_shop(limit: int = 200) -> List[Dict[str, Any]]:
+    """
+    Комнаты в lobby, которые пора переводить в shop:
+    - таймер лобби закончился (started_at <= NOW())
+    - или набралось >= 50% мест (минимум 2 участника)
+    """
+    return fetch_all("""
+        WITH counts AS (
+            SELECT room_id, COUNT(*)::int AS members_count
+            FROM room_members
+            GROUP BY room_id
+        )
+        SELECT
+            r.id,
+            rp.waiting_shop_stage,
+            rp.max_members_count,
+            COALESCE(c.members_count, 0) AS members_count
+        FROM rooms r
+        JOIN room_pattern rp ON rp.id = r.room_pattern_id
+        LEFT JOIN counts c ON c.room_id = r.id
+        WHERE r.status = 'lobby'
+          AND (
+            (r.started_at IS NOT NULL AND r.started_at <= NOW() AND COALESCE(c.members_count, 0) >= 1)
+            OR COALESCE(c.members_count, 0) >= GREATEST(2, (rp.max_members_count + 1) / 2)
+          )
+        ORDER BY r.id ASC
+        LIMIT %s
+    """, (int(limit),))
+
+
+def get_shop_rooms_due(limit: int = 200) -> List[Dict[str, Any]]:
+    """
+    Комнаты в shop, у которых истёк таймер стадии (started_at <= NOW()).
+    """
+    return fetch_all("""
+        WITH counts AS (
+            SELECT room_id, COUNT(*)::int AS members_count
+            FROM room_members
+            GROUP BY room_id
+        )
+        SELECT r.id
+        FROM rooms r
+        JOIN counts c ON c.room_id = r.id
+        WHERE r.status = 'shop'
+          AND r.started_at IS NOT NULL
+          AND r.started_at <= NOW()
+          AND c.members_count >= 1
+        ORDER BY r.id ASC
+        LIMIT %s
+    """, (int(limit),))
 
 
 def finish_shop_and_pick_winner(room_id: int) -> Optional[Dict[str, Any]]:
@@ -509,9 +653,11 @@ def start_game_if_shop(room_id: int) -> bool:
         UPDATE rooms
         SET status = 'running',
             started_at = NOW()
-        WHERE id = %s AND status = 'shop'
+        WHERE id = %s
+          AND status = 'shop'
+          AND EXISTS (SELECT 1 FROM room_members WHERE room_id = %s)
         RETURNING id
-    """, (int(room_id), int(room_id)))
+    """, (int(room_id), int(room_id), int(room_id)))
     return bool(result)
 
 
@@ -523,6 +669,23 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
     result = execute_with_returning("""
         WITH locked AS (
             SELECT pg_advisory_xact_lock(%s, 10)
+        ),
+        room_data AS (
+            SELECT r.id, rp.rank, rp.winner_payout_percent
+            FROM rooms r
+            JOIN room_pattern rp ON rp.id = r.room_pattern_id
+            WHERE r.id = %s
+        ),
+        escrow_init AS (
+            INSERT INTO room_escrow (room_id, amount)
+            VALUES (%s, 0)
+            ON CONFLICT (room_id) DO NOTHING
+        ),
+        escrow AS (
+            SELECT amount::bigint AS total_fund
+            FROM room_escrow
+            WHERE room_id = %s
+            FOR UPDATE
         ),
         members AS (
             SELECT
@@ -544,7 +707,18 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
             ORDER BY m.cum_weight
             LIMIT 1
         ),
-        upd AS (
+        calc AS (
+            SELECT
+                e.total_fund,
+                FLOOR(e.total_fund * (rd.rank / 100.0))::bigint AS casino_cut,
+                GREATEST(0, e.total_fund - FLOOR(e.total_fund * (rd.rank / 100.0))::bigint) AS prize_pool,
+                FLOOR(
+                    GREATEST(0, e.total_fund - FLOOR(e.total_fund * (rd.rank / 100.0))::bigint)
+                    * (rd.winner_payout_percent / 100.0)
+                )::bigint AS winner_payout
+            FROM escrow e, room_data rd
+        ),
+        upd_room AS (
             UPDATE rooms
             SET status = 'finished',
                 winner_id = (SELECT user_id FROM winner),
@@ -553,9 +727,91 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
               AND status = 'running'
               AND EXISTS (SELECT 1 FROM members)
             RETURNING id, winner_id, ended_at
+        ),
+        upd_winner AS (
+            UPDATE users
+            SET balance = balance + (SELECT winner_payout FROM calc)
+            WHERE id = (SELECT winner_id FROM upd_room)
+              AND (SELECT winner_payout FROM calc) > 0
+            RETURNING id
+        ),
+        upd_casino AS (
+            UPDATE casino_balance
+            SET balance = balance + (SELECT (total_fund - winner_payout) FROM calc)
+            WHERE id = 1 AND EXISTS (SELECT 1 FROM upd_room)
+            RETURNING balance
+        ),
+        escrow_zero AS (
+            UPDATE room_escrow
+            SET amount = 0,
+                updated_at = NOW()
+            WHERE room_id = %s AND EXISTS (SELECT 1 FROM upd_room)
+            RETURNING amount
+        ),
+        ledger_winner AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                (SELECT id FROM upd_room),
+                (SELECT winner_id FROM upd_room),
+                'user',
+                'payout',
+                (SELECT winner_payout FROM calc),
+                jsonb_build_object(
+                    'total_fund', (SELECT total_fund FROM calc),
+                    'casino_cut', (SELECT casino_cut FROM calc),
+                    'winner_payout_percent', (SELECT winner_payout_percent FROM room_data)
+                )
+            WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT winner_payout FROM calc) > 0
+            RETURNING 1
+        ),
+        ledger_casino AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                (SELECT id FROM upd_room),
+                NULL,
+                'casino',
+                'casino_income',
+                (SELECT (total_fund - winner_payout) FROM calc),
+                jsonb_build_object(
+                    'total_fund', (SELECT total_fund FROM calc),
+                    'casino_cut', (SELECT casino_cut FROM calc),
+                    'winner_payout', (SELECT winner_payout FROM calc)
+                )
+            WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT total_fund FROM calc) > 0
+            RETURNING 1
+        ),
+        ledger_escrow AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                (SELECT id FROM upd_room),
+                NULL,
+                'escrow',
+                'escrow_out',
+                -(SELECT total_fund FROM calc),
+                jsonb_build_object(
+                    'total_fund', (SELECT total_fund FROM calc),
+                    'winner_payout', (SELECT winner_payout FROM calc),
+                    'casino_income', (SELECT (total_fund - winner_payout) FROM calc)
+                )
+            WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT total_fund FROM calc) > 0
+            RETURNING 1
         )
-        SELECT * FROM upd
-    """, (int(room_id), int(room_id), int(room_id)))
+        SELECT
+            (SELECT id FROM upd_room) AS id,
+            (SELECT winner_id FROM upd_room) AS winner_id,
+            (SELECT ended_at FROM upd_room) AS ended_at,
+            (SELECT total_fund FROM calc) AS total_fund,
+            (SELECT casino_cut FROM calc) AS casino_cut,
+            (SELECT winner_payout FROM calc) AS winner_payout
+    """, (
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+    ))
     return result
 
 
@@ -606,6 +862,34 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             SELECT %s, %s, 0
             WHERE EXISTS (SELECT 1 FROM pay)
             RETURNING id
+        ),
+        escrow_init AS (
+            INSERT INTO room_escrow (room_id, amount)
+            VALUES (%s, 0)
+            ON CONFLICT (room_id) DO NOTHING
+        ),
+        escrow_upd AS (
+            UPDATE room_escrow
+            SET amount = amount + (SELECT join_cost FROM allowed),
+                updated_at = NOW()
+            WHERE room_id = %s AND EXISTS (SELECT 1 FROM ins)
+            RETURNING amount
+        ),
+        ledger_user AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s, %s, 'user', 'shop_buy_slot', -(SELECT join_cost FROM allowed),
+                jsonb_build_object('slot_id', (SELECT id FROM ins), 'kind', 'slot')
+            WHERE EXISTS (SELECT 1 FROM ins)
+            RETURNING 1
+        ),
+        ledger_escrow AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s, %s, 'escrow', 'shop_buy_slot', (SELECT join_cost FROM allowed),
+                jsonb_build_object('slot_id', (SELECT id FROM ins), 'kind', 'slot')
+            WHERE EXISTS (SELECT 1 FROM ins)
+            RETURNING 1
         )
         SELECT
             (SELECT COUNT(*)::int FROM ins) AS inserted,
@@ -617,7 +901,8 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             ((SELECT members_count FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS members_count_after,
             ((SELECT max_members_count FROM allowed) - ((SELECT members_count FROM allowed) + (SELECT COUNT(*)::int FROM ins))) AS free_slots_after,
             ((SELECT user_weight FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS user_weight_after,
-            ((SELECT total_weight FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS total_weight_after
+            ((SELECT total_weight FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS total_weight_after,
+            (SELECT amount FROM escrow_upd) AS escrow_amount_after
         FROM allowed
     """, (
         int(room_id),
@@ -626,6 +911,12 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
         int(room_id),
         int(room_id),
         int(user_id),
+        int(user_id),
+        int(room_id),
+        int(user_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
         int(user_id),
         int(room_id),
         int(user_id),
@@ -661,8 +952,9 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
             SELECT pg_advisory_xact_lock(%s, 8)
         ),
         room_data AS (
-            SELECT r.status
+            SELECT r.status, rp.boost_cost_per_point
             FROM rooms r
+            JOIN room_pattern rp ON rp.id = r.room_pattern_id
             WHERE r.id = %s
         ),
         slot AS (
@@ -681,9 +973,19 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
                 (SELECT COUNT(*) = 1 FROM slot WHERE user_id = %s) AS ok_owner,
                 (SELECT boost = 0 FROM slot) AS ok_unboosted,
                 ((w.user_weight + %s) * 2 <= (w.total_weight + %s)) AS ok_chance,
+                ((SELECT boost_cost_per_point FROM room_data) * %s)::bigint AS boost_cost,
                 w.total_weight AS total_weight,
                 w.user_weight AS user_weight
             FROM weights w
+        ),
+        pay AS (
+            UPDATE users
+            SET balance = balance - (SELECT boost_cost FROM allowed)
+            WHERE id = %s
+              AND is_bot = FALSE
+              AND balance >= (SELECT boost_cost FROM allowed)
+              AND (SELECT ok_status AND ok_owner AND ok_unboosted AND ok_chance FROM allowed)
+            RETURNING id
         ),
         upd AS (
             UPDATE room_members
@@ -692,8 +994,36 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
               AND room_id = %s
               AND user_id = %s
               AND boost = 0
-              AND (SELECT ok_status AND ok_owner AND ok_unboosted AND ok_chance FROM allowed)
+              AND EXISTS (SELECT 1 FROM pay)
             RETURNING id
+        ),
+        escrow_init AS (
+            INSERT INTO room_escrow (room_id, amount)
+            VALUES (%s, 0)
+            ON CONFLICT (room_id) DO NOTHING
+        ),
+        escrow_upd AS (
+            UPDATE room_escrow
+            SET amount = amount + (SELECT boost_cost FROM allowed),
+                updated_at = NOW()
+            WHERE room_id = %s AND EXISTS (SELECT 1 FROM upd)
+            RETURNING amount
+        ),
+        ledger_user AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s, %s, 'user', 'shop_buy_boost', -(SELECT boost_cost FROM allowed),
+                jsonb_build_object('slot_id', %s, 'boost', %s, 'kind', 'boost')
+            WHERE EXISTS (SELECT 1 FROM upd)
+            RETURNING 1
+        ),
+        ledger_escrow AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s, %s, 'escrow', 'shop_buy_boost', (SELECT boost_cost FROM allowed),
+                jsonb_build_object('slot_id', %s, 'boost', %s, 'kind', 'boost')
+            WHERE EXISTS (SELECT 1 FROM upd)
+            RETURNING 1
         )
         SELECT
             (SELECT COUNT(*)::int FROM upd) AS updated,
@@ -702,7 +1032,9 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
             (SELECT ok_unboosted FROM allowed) AS ok_unboosted,
             (SELECT ok_chance FROM allowed) AS ok_chance,
             ((SELECT user_weight FROM allowed) + %s) AS user_weight_after,
-            ((SELECT total_weight FROM allowed) + %s) AS total_weight_after
+            ((SELECT total_weight FROM allowed) + %s) AS total_weight_after,
+            (SELECT amount FROM escrow_upd) AS escrow_amount_after,
+            (SELECT boost_cost FROM allowed) AS boost_cost
         FROM allowed
     """, (
         int(room_id),
@@ -716,9 +1048,21 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
         int(boost_value),
         int(boost_value),
         int(boost_value),
+        int(user_id),
+        int(boost_value),
         int(slot_id),
         int(room_id),
         int(user_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(user_id),
+        int(slot_id),
+        int(boost_value),
+        int(room_id),
+        int(user_id),
+        int(slot_id),
+        int(boost_value),
         int(boost_value),
         int(boost_value),
     ))
@@ -743,7 +1087,7 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
         return {"success": False, "message": "Boost already purchased for this slot", **result}
     if not ok_chance:
         return {"success": False, "message": "Chance cannot exceed 50%", **result}
-    return {"success": False, "message": "Boost purchase failed", **result}
+    return {"success": False, "message": "Not enough balance", **result}
 
 
 def get_all_rooms(limit=100):

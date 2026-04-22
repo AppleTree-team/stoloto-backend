@@ -35,7 +35,11 @@ CREATE TABLE room_pattern (
 
     max_rooms_count INTEGER NOT NULL DEFAULT 50,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    weight INTEGER NOT NULL DEFAULT 1
+    weight INTEGER NOT NULL DEFAULT 1,
+
+    -- Финансы
+    boost_cost_per_point BIGINT NOT NULL DEFAULT 10 CHECK (boost_cost_per_point >= 0),
+    winner_payout_percent INTEGER NOT NULL DEFAULT 80 CHECK (winner_payout_percent BETWEEN 0 AND 100)
 );
 
 
@@ -71,6 +75,23 @@ CREATE TABLE room_members (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     boost INTEGER DEFAULT 0
+);
+
+CREATE TABLE room_escrow (
+    room_id INTEGER PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+    amount BIGINT NOT NULL DEFAULT 0 CHECK (amount >= 0),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE ledger_entries (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    account VARCHAR(32) NOT NULL, -- user / casino / escrow
+    entry_type VARCHAR(64) NOT NULL,
+    amount BIGINT NOT NULL, -- + credit, - debit
+    meta JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 
@@ -111,11 +132,11 @@ SELECT
 FROM generate_series(1, 100) AS i;
 
 -- Заполнение таблицы паттернов
-INSERT INTO room_pattern (game, join_cost, max_members_count, rank, min_bots_count, max_bots_count, waiting_lobby_stage, waiting_shop_stage)
+INSERT INTO room_pattern (game, join_cost, max_members_count, rank, min_bots_count, max_bots_count, waiting_lobby_stage, waiting_shop_stage, boost_cost_per_point, winner_payout_percent)
 VALUES
-('wheel',   100, 10, 1.0, 2, 5, 60, 30),
-('aviator', 200, 8,  1.5, 1, 4, 45, 20),
-('plinko',  50,  6,  0.8, 1, 3, 30, 15);
+('wheel',   100, 10, 20.0, 2, 5, 60, 30, 10, 80),
+('aviator', 200, 8,  20.0, 1, 4, 45, 20, 10, 80),
+('plinko',  50,  6,  20.0, 1, 3, 30, 15, 10, 80);
 
 
 -- Заполнение комнат
