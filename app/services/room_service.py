@@ -648,15 +648,140 @@ def start_game_if_shop(room_id: int) -> bool:
     result = execute_with_returning("""
         WITH locked AS (
             SELECT pg_advisory_xact_lock(%s, 9)
+        ),
+        anchor AS (
+            SELECT 1 AS one
+        ),
+        room_data AS (
+            SELECT r.id, r.status, rp.max_members_count, rp.join_cost
+            FROM rooms r
+            JOIN room_pattern rp ON rp.id = r.room_pattern_id
+            WHERE r.id = %s
+            FOR UPDATE
+        ),
+        cfg AS (
+            SELECT casino_balance::bigint AS casino_balance
+            FROM system_config
+            WHERE id = 1
+            FOR UPDATE
+        ),
+        cfg_row AS (
+            SELECT casino_balance
+            FROM cfg
+            UNION ALL
+            SELECT 0::bigint AS casino_balance
+            WHERE NOT EXISTS (SELECT 1 FROM cfg)
+        ),
+        counts AS (
+            SELECT COUNT(*)::int AS members_count
+            FROM room_members
+            WHERE room_id = %s
+        ),
+        to_fill AS (
+            SELECT
+                (COALESCE(rd.status::text, '') = 'shop') AS ok_shop,
+                COALESCE(rd.join_cost, 0)::bigint AS join_cost,
+                COALESCE(rd.max_members_count, 0)::int AS max_members_count,
+                c.members_count::int AS members_count,
+                cfg.casino_balance::bigint AS casino_balance,
+                GREATEST(0, COALESCE(rd.max_members_count, 0) - c.members_count)::int AS free_slots,
+                LEAST(
+                    GREATEST(0, COALESCE(rd.max_members_count, 0) - c.members_count)::int,
+                    CASE WHEN COALESCE(rd.join_cost, 0) > 0 THEN (cfg.casino_balance / rd.join_cost)::int ELSE 0 END
+                )::int AS fill_slots
+            FROM anchor a
+            LEFT JOIN room_data rd ON TRUE
+            CROSS JOIN cfg_row cfg
+            CROSS JOIN counts c
+        ),
+        bots AS (
+            SELECT id AS bot_id
+            FROM users
+            WHERE is_bot = TRUE
+              AND id NOT IN (SELECT user_id FROM room_members WHERE room_id = %s)
+            ORDER BY RANDOM()
+            LIMIT (SELECT fill_slots FROM to_fill)
+        ),
+        ins AS (
+            INSERT INTO room_members (room_id, user_id, boost)
+            SELECT %s, bot_id, 0
+            FROM bots
+            WHERE (SELECT ok_shop FROM to_fill) AND (SELECT fill_slots FROM to_fill) > 0
+            RETURNING id, user_id
+        ),
+        cost AS (
+            SELECT ((SELECT join_cost FROM to_fill) * (SELECT COUNT(*) FROM ins))::bigint AS total_cost,
+                   (SELECT COUNT(*)::int FROM ins) AS bots_added
+        ),
+        escrow_init AS (
+            INSERT INTO room_escrow (room_id, amount)
+            VALUES (%s, 0)
+            ON CONFLICT (room_id) DO NOTHING
+        ),
+        escrow_upd AS (
+            UPDATE room_escrow
+            SET amount = amount + (SELECT total_cost FROM cost),
+                updated_at = NOW()
+            WHERE room_id = %s AND (SELECT total_cost FROM cost) > 0
+            RETURNING amount
+        ),
+        cfg_upd AS (
+            UPDATE system_config
+            SET casino_balance = casino_balance - (SELECT total_cost FROM cost)
+            WHERE id = 1 AND (SELECT total_cost FROM cost) > 0
+            RETURNING casino_balance
+        ),
+        ledger_casino AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s,
+                NULL,
+                'casino',
+                'bot_slots',
+                -(SELECT total_cost FROM cost),
+                jsonb_build_object(
+                    'bots_added', (SELECT bots_added FROM cost),
+                    'bot_ids', COALESCE((SELECT jsonb_agg(user_id) FROM ins), '[]'::jsonb)
+                )
+            WHERE (SELECT total_cost FROM cost) > 0
+            RETURNING 1
+        ),
+        ledger_escrow AS (
+            INSERT INTO ledger_entries (room_id, user_id, account, entry_type, amount, meta)
+            SELECT
+                %s,
+                NULL,
+                'escrow',
+                'bot_slots',
+                (SELECT total_cost FROM cost),
+                jsonb_build_object('bots_added', (SELECT bots_added FROM cost))
+            WHERE (SELECT total_cost FROM cost) > 0
+            RETURNING 1
+        ),
+        upd_room AS (
+            UPDATE rooms
+            SET status = 'running',
+                started_at = NOW()
+            WHERE id = %s
+              AND status = 'shop'
+              AND EXISTS (SELECT 1 FROM room_members WHERE room_id = %s)
+            RETURNING id
         )
-        UPDATE rooms
-        SET status = 'running',
-            started_at = NOW()
-        WHERE id = %s
-          AND status = 'shop'
-          AND EXISTS (SELECT 1 FROM room_members WHERE room_id = %s)
-        RETURNING id
-    """, (int(room_id), int(room_id), int(room_id)))
+        SELECT id
+        FROM upd_room
+    """, (
+        int(room_id),  # lock
+        int(room_id),  # room_data
+        int(room_id),  # counts
+        int(room_id),  # bots exclude existing
+        int(room_id),  # ins room_id
+        int(room_id),  # escrow_init
+        int(room_id),  # escrow_upd
+        int(room_id),  # ledger_casino
+        int(room_id),  # ledger_escrow
+        int(room_id),  # upd_room
+        int(room_id),  # upd_room exists
+    ))
     return bool(result)
 
 
