@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user_profile, require_session_payload
+from app.services.user_service import get_user_game_history
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -25,3 +26,20 @@ def profile_me(
         - 401: Неавторизован (отсутствует или неверный токен)
     """
     return profile
+
+
+@router.get("/history")
+def profile_history(
+    limit: int = Query(20, ge=1, le=100),
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Получить историю игр текущего пользователя.
+    """
+    history = get_user_game_history(profile["id"], limit=limit)
+    return {
+        "user_id": profile["id"],
+        "count": len(history),
+        "items": history,
+    }
