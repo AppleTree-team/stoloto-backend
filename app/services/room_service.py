@@ -395,6 +395,26 @@ def create_room(pattern_id: int) -> Dict:
     return room
 
 
+
+
+
+
+#ДОБАВИЛ СТАРТ ЛОББИ
+def start_lobby(room_id: int):
+    """
+    Перевод комнаты из waiting → lobby
+    и фиксирует старт времени.
+    """
+    fetch_one("""
+        UPDATE rooms
+        SET status = 'lobby',
+            started_at = NOW()
+        WHERE id = %s
+          AND status = 'waiting'
+    """, (room_id,))
+
+
+
 def join_room(room_id: int, user_id: int) -> Dict:
     """
     Добавляет пользователя в комнату, занимает 1 слот, boost = 0.
@@ -456,6 +476,12 @@ def join_room(room_id: int, user_id: int) -> Dict:
     """, (room_id, user_id))
 
     is_first = (current_slots == 0)
+
+    #ДОБАВИЛ СТАРТ ЛОББИ
+    # 9. 🔥 СТАРТ LOBBY ТУТ
+    if is_first:
+        start_lobby(room_id)
+
 
     return {
         "success": True,
