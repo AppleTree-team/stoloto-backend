@@ -17,6 +17,11 @@ from app.services.room_service import (
     get_room_members_count,
     get_lobby_seconds_left,
     finish_lobby_to_shop_if_lobby,
+    get_room_total_weight,
+    start_game_if_shop,
+    finish_game_and_pick_winner_if_running,
+    shop_buy_slot as shop_buy_slot_service,
+    shop_buy_boost as shop_buy_boost_service,
 )
 
 from app.models.room import SearchRequest
@@ -161,7 +166,7 @@ async def get_lobby(
             should_end_by_timer = seconds_left == 0
 
             if should_end_by_members or should_end_by_timer:
-                finish_lobby_to_shop_if_lobby(current_room["id"])
+                finish_lobby_to_shop_if_lobby(current_room["id"], current_room.get("waiting_shop_stage", 0))
                 updated_room = get_room_by_token(room_access_token)
                 reason = "members" if should_end_by_members else "timer"
                 yield sse("lobby_end", {
@@ -204,8 +209,9 @@ async def get_lobby(
 
 
 @shop_router.get("/")
-def get_shop(
+async def get_shop(
     room_access_token: str,
+    request: Request,
     profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
@@ -214,22 +220,116 @@ def get_shop(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    if room["status"] != "shop":
+    if room["status"] not in ("shop", "running", "finished"):
         raise HTTPException(status_code=400, detail="Shop is not available now")
 
-    players = get_room_members(room["id"])
-    current_players = len(players)
-    total_pool = room["join_cost"] * current_players
-    casino_cut = int(total_pool * room["rank"])
-    prize_pool = total_pool - casino_cut
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
-    return {
-        "id": room["id"],
-        "game": room["game"],
-        "join_cost": room["join_cost"],
-        "max_members_count": room["max_members_count"],
-        "prize_pool": prize_pool,
+    async def event_generator():
+        last_tick_sent = 0.0
+        last_free_slots = None
+        last_members_count = None
+        last_total_weight = None
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            current_room = get_room_by_token(room_access_token)
+            if not current_room:
+                yield sse("error", {"detail": "Room not found"})
+                break
+
+            if current_room["status"] == "finished":
+                yield sse("game_result", {
+                    "room_id": current_room["id"],
+                    "status": current_room["status"],
+                    "winner_id": current_room.get("winner_id"),
+                    "ended_at": current_room.get("ended_at"),
+                })
+                break
+
+            if current_room["status"] == "running":
+                result = finish_game_and_pick_winner_if_running(current_room["id"])
+                updated = get_room_by_token(room_access_token)
+                yield sse("game_result", {
+                    "room_id": current_room["id"],
+                    "status": updated["status"] if updated else "finished",
+                    "winner_id": (result or {}).get("winner_id") or (updated or {}).get("winner_id"),
+                    "ended_at": (result or {}).get("ended_at") or (updated or {}).get("ended_at"),
+                })
+                break
+
+            if current_room["status"] != "shop":
+                yield sse("shop_end", {"status": current_room["status"], "room_id": current_room["id"]})
+                break
+
+            room_id = current_room["id"]
+            seconds_left = get_lobby_seconds_left(room_id)
+            members_count = get_room_members_count(room_id)
+            total_weight = get_room_total_weight(room_id)
+
+            max_members_count = int(current_room.get("max_members_count") or 0)
+            free_slots = max(0, max_members_count - members_count)
+
+            if (
+                last_free_slots is None
+                or free_slots != last_free_slots
+                or members_count != last_members_count
+                or total_weight != last_total_weight
+            ):
+                yield sse("slots_update", {
+                    "room_id": room_id,
+                    "free_slots": free_slots,
+                    "members_count": members_count,
+                    "max_members_count": max_members_count,
+                    "total_weight": total_weight,
+                })
+                last_free_slots = free_slots
+                last_members_count = members_count
+                last_total_weight = total_weight
+
+            if seconds_left == 0:
+                start_game_if_shop(room_id)
+                yield sse("game_start", {"room_id": room_id, "status": "running"})
+
+                result = finish_game_and_pick_winner_if_running(room_id)
+                updated = get_room_by_token(room_access_token)
+                yield sse("game_result", {
+                    "room_id": room_id,
+                    "status": updated["status"] if updated else "finished",
+                    "winner_id": (result or {}).get("winner_id") or (updated or {}).get("winner_id"),
+                    "ended_at": (result or {}).get("ended_at") or (updated or {}).get("ended_at"),
+                })
+                break
+
+            now_mono = time.monotonic()
+            if now_mono - last_tick_sent >= 10:
+                total_pool = current_room["join_cost"] * members_count
+                casino_cut = int(total_pool * current_room["rank"])
+                prize_pool = total_pool - casino_cut
+
+                yield sse("tick", {
+                    "room_id": room_id,
+                    "status": current_room["status"],
+                    "seconds_left": seconds_left,
+                    "free_slots": free_slots,
+                    "members_count": members_count,
+                    "max_members_count": max_members_count,
+                    "total_weight": total_weight,
+                    "prize_pool": prize_pool,
+                })
+                last_tick_sent = now_mono
+
+            await asyncio.sleep(1)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
     }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
 
 
@@ -238,6 +338,8 @@ def get_shop(
 def shop_buy_boost_on_slot(
     room_access_token: str,
     slot_id: Optional[int] = None,
+    boost: int = 5,
+    profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
     """
@@ -246,13 +348,26 @@ def shop_buy_boost_on_slot(
             если это стадия shop, и оцениваем там же нас на победу в функции pgsql
     """
 
+    if not slot_id:
+        raise HTTPException(status_code=400, detail="slot_id is required")
+
+    if boost <= 0:
+        raise HTTPException(status_code=400, detail="boost must be > 0")
+
     room = get_room_by_token(room_access_token)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    players = get_room_members(room["id"])
+    result = shop_buy_boost_service(room["id"], profile["id"], int(slot_id), int(boost))
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "Boost purchase failed"))
 
-    print(players)
+    return {
+        "status": "success",
+        "slot_id": slot_id,
+        "user_weight_after": result.get("user_weight_after"),
+        "total_weight_after": result.get("total_weight_after"),
+    }
 
 
 
@@ -260,6 +375,7 @@ def shop_buy_boost_on_slot(
 def shop_buy_slot(
     room_access_token: str,
     slot_id: Optional[int] = None,
+    profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
     """
@@ -270,9 +386,16 @@ def shop_buy_slot(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    players = get_room_members(room["id"])
+    result = shop_buy_slot_service(room["id"], profile["id"])
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "Slot purchase failed"))
 
-    print(players)
+    return {
+        "status": "success",
+        "slot_id": result.get("slot_id"),
+        "free_slots": result.get("free_slots_after"),
+        "members_count": result.get("members_count_after"),
+    }
 
 
 

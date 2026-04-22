@@ -316,7 +316,8 @@ def get_room_by_token(token: str) -> Optional[Dict]:
             rp.join_cost,
             rp.max_members_count,
             rp.rank,
-            rp.waiting_lobby_stage
+            rp.waiting_lobby_stage,
+            rp.waiting_shop_stage
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.access_token = %s
@@ -429,20 +430,320 @@ def get_lobby_seconds_left(room_id: int) -> Optional[int]:
     return result["seconds_left"]
 
 
-def finish_lobby_to_shop_if_lobby(room_id: int) -> bool:
+def get_room_total_weight(room_id: int) -> int:
+    result = fetch_one("""
+        SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int AS total_weight
+        FROM room_members
+        WHERE room_id = %s
+    """, (room_id,))
+    return int(result["total_weight"]) if result else 0
+
+
+def finish_lobby_to_shop_if_lobby(room_id: int, waiting_shop_stage_seconds: int) -> bool:
     """
     Переводит комнату из lobby в shop один раз.
-    started_at ставим в NOW() (как "момент окончания лобби"), чтобы клиенты с
-    таймером не продолжали видеть старое будущее значение.
+    started_at выставляем как (NOW() + waiting_shop_stage) — это дедлайн стадии shop.
     """
     result = execute_with_returning("""
         UPDATE rooms
         SET status = 'shop',
-            started_at = NOW()
+            started_at = NOW() + (%s * INTERVAL '1 second')
         WHERE id = %s AND status = 'lobby'
         RETURNING id
-    """, (room_id,))
+    """, (int(waiting_shop_stage_seconds or 0), room_id))
     return bool(result)
+
+
+def finish_shop_and_pick_winner(room_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Завершает стадию shop и выбирает победителя (веса: 1 + boost для каждого слота).
+    Возвращает {id, winner_id, ended_at} или None, если апдейт не произошёл.
+    """
+    result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 6)
+        ),
+        members AS (
+            SELECT
+                rm.id,
+                rm.user_id,
+                (1 + COALESCE(rm.boost, 0))::int AS weight,
+                SUM((1 + COALESCE(rm.boost, 0))::int) OVER () AS total_weight,
+                SUM((1 + COALESCE(rm.boost, 0))::int) OVER (ORDER BY rm.id) AS cum_weight
+            FROM room_members rm
+            WHERE rm.room_id = %s
+        ),
+        rnd AS (
+            SELECT (FLOOR(RANDOM() * (SELECT total_weight FROM members LIMIT 1))::int + 1) AS r
+        ),
+        winner AS (
+            SELECT m.user_id
+            FROM members m, rnd
+            WHERE m.cum_weight >= rnd.r
+            ORDER BY m.cum_weight
+            LIMIT 1
+        ),
+        upd AS (
+            UPDATE rooms
+            SET status = 'finished',
+                winner_id = (SELECT user_id FROM winner),
+                ended_at = NOW()
+            WHERE id = %s
+              AND status = 'shop'
+              AND EXISTS (SELECT 1 FROM members)
+            RETURNING id, winner_id, ended_at
+        )
+        SELECT * FROM upd
+    """, (int(room_id), int(room_id), int(room_id)))
+    return result
+
+
+def start_game_if_shop(room_id: int) -> bool:
+    """
+    Переводит комнату из shop в running (старт игры) один раз.
+    """
+    result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 9)
+        )
+        UPDATE rooms
+        SET status = 'running',
+            started_at = NOW()
+        WHERE id = %s AND status = 'shop'
+        RETURNING id
+    """, (int(room_id), int(room_id)))
+    return bool(result)
+
+
+def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Завершает игру (running -> finished) и выбирает победителя.
+    Веса: 1 + boost для каждого слота.
+    """
+    result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 10)
+        ),
+        members AS (
+            SELECT
+                rm.id,
+                rm.user_id,
+                (1 + COALESCE(rm.boost, 0))::int AS weight,
+                SUM((1 + COALESCE(rm.boost, 0))::int) OVER () AS total_weight,
+                SUM((1 + COALESCE(rm.boost, 0))::int) OVER (ORDER BY rm.id) AS cum_weight
+            FROM room_members rm
+            WHERE rm.room_id = %s
+        ),
+        rnd AS (
+            SELECT (FLOOR(RANDOM() * (SELECT total_weight FROM members LIMIT 1))::int + 1) AS r
+        ),
+        winner AS (
+            SELECT m.user_id
+            FROM members m, rnd
+            WHERE m.cum_weight >= rnd.r
+            ORDER BY m.cum_weight
+            LIMIT 1
+        ),
+        upd AS (
+            UPDATE rooms
+            SET status = 'finished',
+                winner_id = (SELECT user_id FROM winner),
+                ended_at = NOW()
+            WHERE id = %s
+              AND status = 'running'
+              AND EXISTS (SELECT 1 FROM members)
+            RETURNING id, winner_id, ended_at
+        )
+        SELECT * FROM upd
+    """, (int(room_id), int(room_id), int(room_id)))
+    return result
+
+
+def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
+    """
+    Покупка 1 дополнительного слота в стадии shop.
+    Ограничение: шанс пользователя (слоты + бусты) не должен стать > 50%.
+    """
+    result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 7)
+        ),
+        room_data AS (
+            SELECT r.status, rp.max_members_count, rp.join_cost
+            FROM rooms r
+            JOIN room_pattern rp ON rp.id = r.room_pattern_id
+            WHERE r.id = %s
+        ),
+        counts AS (
+            SELECT
+                (SELECT COUNT(*)::int FROM room_members WHERE room_id = %s) AS members_count,
+                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
+                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
+        ),
+        allowed AS (
+            SELECT
+                (rd.status = 'shop') AS ok_status,
+                (c.members_count < rd.max_members_count) AS ok_capacity,
+                ((c.user_weight + 1) * 2 <= (c.total_weight + 1)) AS ok_chance,
+                rd.join_cost AS join_cost,
+                rd.max_members_count AS max_members_count,
+                c.members_count AS members_count,
+                c.total_weight AS total_weight,
+                c.user_weight AS user_weight
+            FROM room_data rd, counts c
+        ),
+        pay AS (
+            UPDATE users
+            SET balance = balance - (SELECT join_cost FROM allowed)
+            WHERE id = %s
+              AND is_bot = FALSE
+              AND balance >= (SELECT join_cost FROM allowed)
+              AND (SELECT ok_status AND ok_capacity AND ok_chance FROM allowed)
+            RETURNING id
+        ),
+        ins AS (
+            INSERT INTO room_members (room_id, user_id, boost)
+            SELECT %s, %s, 0
+            WHERE EXISTS (SELECT 1 FROM pay)
+            RETURNING id
+        )
+        SELECT
+            (SELECT COUNT(*)::int FROM ins) AS inserted,
+            (SELECT id FROM ins) AS slot_id,
+            (SELECT ok_status FROM allowed) AS ok_status,
+            (SELECT ok_capacity FROM allowed) AS ok_capacity,
+            (SELECT ok_chance FROM allowed) AS ok_chance,
+            (SELECT max_members_count FROM allowed) AS max_members_count,
+            ((SELECT members_count FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS members_count_after,
+            ((SELECT max_members_count FROM allowed) - ((SELECT members_count FROM allowed) + (SELECT COUNT(*)::int FROM ins))) AS free_slots_after,
+            ((SELECT user_weight FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS user_weight_after,
+            ((SELECT total_weight FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS total_weight_after
+        FROM allowed
+    """, (
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(user_id),
+        int(user_id),
+        int(room_id),
+        int(user_id),
+    ))
+
+    if not result:
+        return {"success": False, "message": "Room not found"}
+
+    inserted = bool(result.get("inserted"))
+    ok_status = bool(result.get("ok_status"))
+    ok_capacity = bool(result.get("ok_capacity"))
+    ok_chance = bool(result.get("ok_chance"))
+
+    if inserted:
+        return {"success": True, **result}
+
+    if not ok_status:
+        return {"success": False, "message": "Shop is not available now", **result}
+    if not ok_capacity:
+        return {"success": False, "message": "No free slots", **result}
+    if not ok_chance:
+        return {"success": False, "message": "Chance cannot exceed 50%", **result}
+    return {"success": False, "message": "Not enough balance", **result}
+
+
+def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -> Dict[str, Any]:
+    """
+    Покупка буста на один слот (room_members.id) в стадии shop.
+    Ограничение: шанс пользователя (слоты + бусты) не должен стать > 50%.
+    """
+    result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 8)
+        ),
+        room_data AS (
+            SELECT r.status
+            FROM rooms r
+            WHERE r.id = %s
+        ),
+        slot AS (
+            SELECT rm.id, rm.user_id, rm.boost
+            FROM room_members rm
+            WHERE rm.id = %s AND rm.room_id = %s
+        ),
+        weights AS (
+            SELECT
+                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
+                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
+        ),
+        allowed AS (
+            SELECT
+                (SELECT status = 'shop' FROM room_data) AS ok_status,
+                (SELECT COUNT(*) = 1 FROM slot WHERE user_id = %s) AS ok_owner,
+                (SELECT boost = 0 FROM slot) AS ok_unboosted,
+                ((w.user_weight + %s) * 2 <= (w.total_weight + %s)) AS ok_chance,
+                w.total_weight AS total_weight,
+                w.user_weight AS user_weight
+            FROM weights w
+        ),
+        upd AS (
+            UPDATE room_members
+            SET boost = %s
+            WHERE id = %s
+              AND room_id = %s
+              AND user_id = %s
+              AND boost = 0
+              AND (SELECT ok_status AND ok_owner AND ok_unboosted AND ok_chance FROM allowed)
+            RETURNING id
+        )
+        SELECT
+            (SELECT COUNT(*)::int FROM upd) AS updated,
+            (SELECT ok_status FROM allowed) AS ok_status,
+            (SELECT ok_owner FROM allowed) AS ok_owner,
+            (SELECT ok_unboosted FROM allowed) AS ok_unboosted,
+            (SELECT ok_chance FROM allowed) AS ok_chance,
+            ((SELECT user_weight FROM allowed) + %s) AS user_weight_after,
+            ((SELECT total_weight FROM allowed) + %s) AS total_weight_after
+        FROM allowed
+    """, (
+        int(room_id),
+        int(room_id),
+        int(slot_id),
+        int(room_id),
+        int(room_id),
+        int(room_id),
+        int(user_id),
+        int(user_id),
+        int(boost_value),
+        int(boost_value),
+        int(boost_value),
+        int(slot_id),
+        int(room_id),
+        int(user_id),
+        int(boost_value),
+        int(boost_value),
+    ))
+
+    if not result:
+        return {"success": False, "message": "Room not found"}
+
+    updated = bool(result.get("updated"))
+    ok_status = bool(result.get("ok_status"))
+    ok_owner = bool(result.get("ok_owner"))
+    ok_unboosted = bool(result.get("ok_unboosted"))
+    ok_chance = bool(result.get("ok_chance"))
+
+    if updated:
+        return {"success": True, **result}
+
+    if not ok_status:
+        return {"success": False, "message": "Shop is not available now", **result}
+    if not ok_owner:
+        return {"success": False, "message": "Slot not found", **result}
+    if not ok_unboosted:
+        return {"success": False, "message": "Boost already purchased for this slot", **result}
+    if not ok_chance:
+        return {"success": False, "message": "Chance cannot exceed 50%", **result}
+    return {"success": False, "message": "Boost purchase failed", **result}
 
 
 def get_all_rooms(limit=100):
@@ -488,7 +789,7 @@ def get_room_by_pattern(pattern_id: int) -> Optional[Dict]:
 
 def get_room_members(room_id: int):
      return fetch_all("""
-         SELECT rm.user_id, rm.boost, u.is_bot
+         SELECT rm.id, rm.user_id, rm.boost, u.is_bot
          FROM room_members rm
          JOIN users u ON u.id = rm.user_id
          WHERE rm.room_id = %s
