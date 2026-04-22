@@ -4,14 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_current_user_profile, require_session_payload
 from app.services.matchmaking_service import find_room_for_user
 from app.services.room_service import get_room_by_token, get_room_members
-#from app.services.room_service import find_room_for_user, get_room_by_token
+
+from app.models.room import SearchRequest
+
+from typing import Optional
+
 
 router = APIRouter(prefix="/room", tags=["Room"])
+shop_router = APIRouter(prefix="", tags=["Shop"])
 
-class SearchRequest(BaseModel):
-    game: str
-    min_cost: int
-    max_cost: int
+
+
+
 
 @router.post("/search")
 def search_room(
@@ -20,7 +24,7 @@ def search_room(
     _payload: dict = Depends(require_session_payload),
 ):
     """
-    Найти (или создать) комнату для пользователя.
+    Найти (или создать не активированную комнату) комнату для пользователя.
 
     Возвращает:
         - 200: {
@@ -44,11 +48,11 @@ def search_room(
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
 
-    room = result["room"]
-
     return {
-        "room_access_token": room["websocket_access_token"]
+        "room_access_token": result["room"]["access_token"]
     }
+
+
 
 @router.get("/{room_access_token}")
 def get_room(
@@ -86,12 +90,15 @@ def get_room(
     }
 
 
-@router.get("/lobby/{room_access_token}")
+@router.get("/{room_access_token}/lobby")
 def get_lobby(
     room_access_token: str,
     profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
+    """
+        SSE Стрим начала стадии закупок
+    """
     room = get_room_by_token(room_access_token)
 
     if not room:
@@ -114,7 +121,8 @@ def get_lobby(
     }
 
 
-@router.get("/shop/{room_access_token}")
+
+@shop_router.get("/")
 def get_shop(
     room_access_token: str,
     profile: dict = Depends(get_current_user_profile),
@@ -142,34 +150,11 @@ def get_shop(
         "prize_pool": prize_pool,
     }
 
-@router.post("/shop/boosts/{room_access_token}")
-def buy_boosts(
-
-    room_access_token: str,
-    profile: dict = Depends(get_current_user_profile),
-    _payload: dict = Depends(require_session_payload),
-):
-    return {
-
-    }
-
-
-@router.post("/shop/slots/{room_access_token}")
-def buy_slots(
-        slots_count: int,
-        room_access_token: str,
-        profile: dict = Depends(get_current_user_profile),
-        _payload: dict = Depends(require_session_payload),
-):
-
-    return {
-
-    }
 
 
 
-@shop_router.post("/{room_access_token}/buy/bust")
-def shop_buy_bust_on_slot(
+@shop_router.post("/buy/boost")
+def shop_buy_boost_on_slot(
     room_access_token: str,
     slot_id: Optional[int] = None,
     _payload: dict = Depends(require_session_payload),
@@ -191,8 +176,29 @@ def shop_buy_bust_on_slot(
 
 
 
-@shop_router.get("/{room_access_token}/victory_chance")
-def shop_victory_chance(
+
+@shop_router.post("/buy/slot")
+def shop_buy_slot(
+    room_access_token: str,
+    slot_id: Optional[int] = None,
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Купить слот для выбранного слота.
+    """
+
+    room = get_room_by_token(room_access_token)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    players = get_room_members(room["id"])
+
+    print(players)
+
+
+
+@router.get("/{room_access_token}/victory_chance")
+def room_victory_chance(
     room_access_token: str,
     _payload: dict = Depends(require_session_payload),
 ):
@@ -201,3 +207,9 @@ def shop_victory_chance(
     """
     pass
 
+
+
+
+
+
+router.include_router(shop_router, prefix="/{room_access_token}/shop")
