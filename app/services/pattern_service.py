@@ -67,7 +67,7 @@ def get_pattern_by_id(pattern_id: int) -> Optional[Dict[str, Any]]:
 
 def get_pattern_by_game_and_cost(game: str, min_cost: int, max_cost: int) -> Optional[Dict]:
     """
-    Возвращает самый дорогой паттерн комнаты для указанной игры и стоимости входа.
+    Возвращает случайный паттерн комнаты с наибольшим весом для указанной игры и стоимости входа.
     """
     return fetch_one("""
         SELECT *
