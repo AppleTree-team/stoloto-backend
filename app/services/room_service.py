@@ -294,7 +294,7 @@ from app.db.db import fetch_one, fetch_all, execute_with_returning
 # 🔧 AUXILIARY FUNCTIONS
 # =========================================================
 
-def generate_websocket_token() -> str:
+def generate_access_token() -> str:
     """Генерирует длинную случайную строку для токена комнаты."""
     return secrets.token_urlsafe(48)
 
@@ -303,24 +303,24 @@ def get_room_by_id(room_id: int):
     return fetch_one("""
         SELECT * 
         FROM room
-        WHETE id = %s
+        WHERE id = %s
     """, (room_id,))
 
 
 def get_room_by_token(token: str) -> Optional[Dict]:
     """Возвращает id, status, game, cost комнаты по токену."""
     return fetch_one("""
-        SELECT r.id, r.status, rp.game, rp.join_cost, rp.max_members_count, rp.rank
+        SELECT r.*, rp.game, rp.join_cost, rp.max_members_count, rp.rank
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
-        WHERE r.websocket_access_token = %s
+        WHERE r.access_token = %s
     """, (token,))
 
 
 def get_all_rooms(limit=100):
     return fetch_all("""
-        SELECT r.id, r.status, r.created_at, rp.game, rp.join_cost,
-               (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as members_count
+        SELECT r.*, rp.game, rp.join_cost
+        (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as members_count
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.status IN ('waiting', 'lobby', 'shop', 'running')
@@ -334,7 +334,7 @@ def get_room_by_pattern(pattern_id: int) -> Optional[Dict]:
     Возвращает комнату со статусом 'lobby', имеющую хотя бы 1 свободный слот.
     """
     rooms = fetch_all("""
-        SELECT r.id, r.websocket_access_token, r.status, rp.max_members_count
+        SELECT r.*, rp.game, rp.join_cost, rp.max_members_count
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.room_pattern_id = %s
@@ -381,12 +381,17 @@ def get_user_slots_in_room(room_id: int, user_id: int) -> List[Dict]:
 
 def create_room(pattern_id: int) -> Dict:
     """Создаёт новую комнату со статусом 'waiting' и уникальным токеном."""
-    token = generate_websocket_token()
+    token = generate_access_token()
     room = execute_with_returning("""
-        INSERT INTO rooms (room_pattern_id, websocket_access_token, status)
+        INSERT INTO rooms (room_pattern_id, access_token, status)
         VALUES (%s, %s, 'waiting')
         RETURNING *
     """, (pattern_id, token))
+    pattern = fetch_one("""
+        SELECT game, join_cost, max_members_count 
+        FROM room_pattern WHERE id = %s
+    """, (pattern_id,))
+    room.update(pattern)
     return room
 
 
