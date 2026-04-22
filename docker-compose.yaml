@@ -37,7 +37,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM}
       ACCESS_TOKEN_EXPIRE_HOURS: ${ACCESS_TOKEN_EXPIRE_HOURS}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "${APP_PORT:-8000}:8000"
     healthcheck:
