@@ -97,7 +97,7 @@ def get_lobby(
     _payload: dict = Depends(require_session_payload),
 ):
     """
-        SSE Стрим начала стадии закупок
+        SSE Стрим ожидания начала стадии закупок
     """
     room = get_room_by_token(room_access_token)
 
@@ -160,10 +160,9 @@ def shop_buy_boost_on_slot(
     _payload: dict = Depends(require_session_payload),
 ):
     """
-    Купить буст для выбранного слота.
-    Проверяем в какой стадии находится комната,
-        если это стадия shop, и оцениваем там же нас на победу в функции pgsql
-
+        Купить буст для выбранного слота.
+        Проверяем в какой стадии находится комната,
+            если это стадия shop, и оцениваем там же нас на победу в функции pgsql
     """
 
     room = get_room_by_token(room_access_token)
@@ -173,7 +172,6 @@ def shop_buy_boost_on_slot(
     players = get_room_members(room["id"])
 
     print(players)
-
 
 
 
