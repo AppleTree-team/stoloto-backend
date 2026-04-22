@@ -334,12 +334,15 @@ def start_lobby_if_waiting(room_id: int, waiting_lobby_stage_seconds: int) -> bo
     Возвращает True, если статус реально изменился.
     """
     result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 1)
+        )
         UPDATE rooms
         SET status = 'lobby',
             started_at = NOW() + (%s * INTERVAL '1 second')
         WHERE id = %s AND status = 'waiting'
         RETURNING id
-    """, (int(waiting_lobby_stage_seconds or 0), room_id))
+    """, (int(room_id), int(waiting_lobby_stage_seconds or 0), room_id))
     return bool(result)
 
 
@@ -351,11 +354,14 @@ def set_lobby_timer_if_missing(room_id: int, waiting_lobby_stage_seconds: int) -
     Возвращает True, если started_at был установлен в этом вызове.
     """
     result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 1)
+        )
         UPDATE rooms
         SET started_at = NOW() + (%s * INTERVAL '1 second')
         WHERE id = %s AND status = 'lobby' AND started_at IS NULL
         RETURNING id
-    """, (int(waiting_lobby_stage_seconds or 0), room_id))
+    """, (int(room_id), int(waiting_lobby_stage_seconds or 0), room_id))
     return bool(result)
 
 
@@ -583,12 +589,15 @@ def finish_lobby_to_shop_if_lobby(room_id: int, waiting_shop_stage_seconds: int)
     started_at выставляем как (NOW() + waiting_shop_stage) — это дедлайн стадии shop.
     """
     result = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(%s, 1)
+        )
         UPDATE rooms
         SET status = 'shop',
             started_at = NOW() + (%s * INTERVAL '1 second')
         WHERE id = %s AND status = 'lobby'
         RETURNING id
-    """, (int(waiting_shop_stage_seconds or 0), room_id))
+    """, (int(room_id), int(waiting_shop_stage_seconds or 0), room_id))
     return bool(result)
 
 
@@ -651,7 +660,7 @@ def finish_shop_and_pick_winner(room_id: int) -> Optional[Dict[str, Any]]:
     """
     result = execute_with_returning("""
         WITH locked AS (
-            SELECT pg_advisory_xact_lock(%s, 6)
+            SELECT pg_advisory_xact_lock(%s, 1)
         ),
         members AS (
             SELECT
@@ -694,7 +703,7 @@ def start_game_if_shop(room_id: int) -> Dict[str, Any]:
     """
     result = execute_with_returning("""
         WITH locked AS (
-            SELECT pg_advisory_xact_lock(%s, 9)
+            SELECT pg_advisory_xact_lock(%s, 1)
         ),
         anchor AS (
             SELECT 1 AS one
@@ -861,10 +870,10 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
     """
     result = execute_with_returning("""
         WITH locked AS (
-            SELECT pg_advisory_xact_lock(%s, 10)
+            SELECT pg_advisory_xact_lock(%s, 1)
         ),
         room_data AS (
-            SELECT r.id, rp.rank, rp.winner_payout_percent
+            SELECT r.id, rp.rank
             FROM rooms r
             JOIN room_pattern rp ON rp.id = r.room_pattern_id
             WHERE r.id = %s
@@ -905,10 +914,7 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 e.total_fund,
                 FLOOR(e.total_fund * (rd.rank / 100.0))::bigint AS casino_cut,
                 GREATEST(0, e.total_fund - FLOOR(e.total_fund * (rd.rank / 100.0))::bigint) AS prize_pool,
-                FLOOR(
-                    GREATEST(0, e.total_fund - FLOOR(e.total_fund * (rd.rank / 100.0))::bigint)
-                    * (rd.winner_payout_percent / 100.0)
-                )::bigint AS winner_payout
+                GREATEST(0, e.total_fund - FLOOR(e.total_fund * (rd.rank / 100.0))::bigint) AS winner_payout
             FROM escrow e, room_data rd
         ),
         upd_room AS (
@@ -952,7 +958,8 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 jsonb_build_object(
                     'total_fund', (SELECT total_fund FROM calc),
                     'casino_cut', (SELECT casino_cut FROM calc),
-                    'winner_payout_percent', (SELECT winner_payout_percent FROM room_data)
+                    'prize_pool', (SELECT prize_pool FROM calc),
+                    'payout_rule', 'prize_pool_after_rake'
                 )
             WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT winner_payout FROM calc) > 0
             RETURNING 1
@@ -1015,7 +1022,7 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
     """
     result = execute_with_returning("""
         WITH locked AS (
-            SELECT pg_advisory_xact_lock(%s, 7)
+            SELECT pg_advisory_xact_lock(%s, 1)
         ),
         room_data AS (
             SELECT r.status, rp.max_members_count, rp.join_cost
@@ -1142,7 +1149,7 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
     """
     result = execute_with_returning("""
         WITH locked AS (
-            SELECT pg_advisory_xact_lock(%s, 8)
+            SELECT pg_advisory_xact_lock(%s, 1)
         ),
         room_data AS (
             SELECT r.status, rp.boost_cost_per_point, rp.max_members_count

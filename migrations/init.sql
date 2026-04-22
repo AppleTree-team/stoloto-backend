@@ -1,7 +1,3 @@
-CREATE TABLE casino_balance (
-    id INTEGER PRIMARY KEY DEFAULT 1,
-    balance BIGINT DEFAULT 0 NOT NULL CHECK (balance >= 0)
-);
 
 CREATE TABLE system_config (
     id INTEGER PRIMARY KEY DEFAULT 1,
