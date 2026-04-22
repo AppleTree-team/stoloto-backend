@@ -82,6 +82,8 @@ CREATE TABLE room_members (
 CREATE TABLE room_escrow (
     room_id INTEGER PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
     amount BIGINT NOT NULL DEFAULT 0 CHECK (amount >= 0),
+    stake_amount BIGINT NOT NULL DEFAULT 0 CHECK (stake_amount >= 0),
+    boost_amount BIGINT NOT NULL DEFAULT 0 CHECK (boost_amount >= 0),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

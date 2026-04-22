@@ -34,8 +34,23 @@ _DDL: Iterable[str] = (
     CREATE TABLE IF NOT EXISTS room_escrow (
         room_id INTEGER PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
         amount BIGINT NOT NULL DEFAULT 0 CHECK (amount >= 0),
+        stake_amount BIGINT NOT NULL DEFAULT 0 CHECK (stake_amount >= 0),
+        boost_amount BIGINT NOT NULL DEFAULT 0 CHECK (boost_amount >= 0),
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+    """,
+    """
+    ALTER TABLE room_escrow
+    ADD COLUMN IF NOT EXISTS stake_amount BIGINT NOT NULL DEFAULT 0 CHECK (stake_amount >= 0)
+    """,
+    """
+    ALTER TABLE room_escrow
+    ADD COLUMN IF NOT EXISTS boost_amount BIGINT NOT NULL DEFAULT 0 CHECK (boost_amount >= 0)
+    """,
+    """
+    UPDATE room_escrow
+    SET stake_amount = amount
+    WHERE stake_amount = 0 AND boost_amount = 0 AND amount > 0
     """,
     """
     CREATE TABLE IF NOT EXISTS ledger_entries (

@@ -425,6 +425,7 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
         escrow_upd AS (
             UPDATE room_escrow
             SET amount = amount + (SELECT join_cost FROM allowed),
+                stake_amount = stake_amount + (SELECT join_cost FROM allowed),
                 updated_at = NOW()
             WHERE room_id = %s AND EXISTS (SELECT 1 FROM ins)
             RETURNING amount
@@ -490,12 +491,30 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
 
 
 def get_room_escrow_amount(room_id: int) -> int:
+    snapshot = get_room_escrow_snapshot(room_id)
+    return int(snapshot["amount"])
+
+
+def get_room_escrow_snapshot(room_id: int) -> Dict[str, int]:
     result = fetch_one("""
-        SELECT amount
-        FROM room_escrow
-        WHERE room_id = %s
+        SELECT
+            COALESCE(COUNT(rm.id), 0)::bigint * COALESCE(rp.join_cost, 0)::bigint AS stake_amount,
+            COALESCE(SUM(COALESCE(rm.boost, 0)), 0)::bigint * COALESCE(rp.boost_cost_per_point, 0)::bigint AS boost_amount
+        FROM rooms r
+        JOIN room_pattern rp ON rp.id = r.room_pattern_id
+        LEFT JOIN room_members rm ON rm.room_id = r.id
+        WHERE r.id = %s
+        GROUP BY rp.join_cost, rp.boost_cost_per_point
     """, (room_id,))
-    return int(result["amount"]) if result else 0
+    if not result:
+        return {"amount": 0, "stake_amount": 0, "boost_amount": 0}
+    stake_amount = int(result.get("stake_amount") or 0)
+    boost_amount = int(result.get("boost_amount") or 0)
+    return {
+        "amount": stake_amount + boost_amount,
+        "stake_amount": stake_amount,
+        "boost_amount": boost_amount,
+    }
 
 
 def get_room_members_count(room_id: int) -> int:
@@ -776,6 +795,7 @@ def start_game_if_shop(room_id: int) -> Dict[str, Any]:
         escrow_upd AS (
             UPDATE room_escrow
             SET amount = amount + (SELECT total_cost FROM cost),
+                stake_amount = stake_amount + (SELECT total_cost FROM cost),
                 updated_at = NOW()
             WHERE room_id = %s AND (SELECT total_cost FROM cost) > 0
             RETURNING amount
@@ -872,21 +892,19 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
             SELECT pg_advisory_xact_lock(%s, 1)
         ),
         room_data AS (
-            SELECT r.id, rp.rank
+            SELECT r.id, rp.rank, rp.join_cost, rp.boost_cost_per_point
             FROM rooms r
             JOIN room_pattern rp ON rp.id = r.room_pattern_id
             WHERE r.id = %s
         ),
-        escrow_init AS (
-            INSERT INTO room_escrow (room_id, amount)
-            VALUES (%s, 0)
-            ON CONFLICT (room_id) DO NOTHING
-        ),
-        escrow AS (
-            SELECT amount::bigint AS total_fund
-            FROM room_escrow
-            WHERE room_id = %s
-            FOR UPDATE
+        funds AS (
+            SELECT
+                (COUNT(rm.id)::bigint * rd.join_cost::bigint) AS stake_fund,
+                (COALESCE(SUM(COALESCE(rm.boost, 0)), 0)::bigint * rd.boost_cost_per_point::bigint) AS boost_fund,
+                ((COUNT(rm.id)::bigint * rd.join_cost::bigint) + (COALESCE(SUM(COALESCE(rm.boost, 0)), 0)::bigint * rd.boost_cost_per_point::bigint)) AS total_fund
+            FROM room_data rd
+            LEFT JOIN room_members rm ON rm.room_id = rd.id
+            GROUP BY rd.join_cost, rd.boost_cost_per_point
         ),
         members AS (
             SELECT
@@ -910,11 +928,13 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
         ),
         calc AS (
             SELECT
-                e.total_fund,
-                FLOOR(e.total_fund * (rd.rank / 100.0))::bigint AS casino_cut,
-                GREATEST(0, e.total_fund - FLOOR(e.total_fund * (rd.rank / 100.0))::bigint) AS prize_pool,
-                GREATEST(0, e.total_fund - FLOOR(e.total_fund * (rd.rank / 100.0))::bigint) AS winner_payout
-            FROM escrow e, room_data rd
+                f.total_fund,
+                f.stake_fund,
+                f.boost_fund,
+                FLOOR(f.stake_fund * (rd.rank / 100.0))::bigint AS casino_cut,
+                GREATEST(0, f.stake_fund - FLOOR(f.stake_fund * (rd.rank / 100.0))::bigint) + f.boost_fund AS prize_pool,
+                GREATEST(0, f.stake_fund - FLOOR(f.stake_fund * (rd.rank / 100.0))::bigint) + f.boost_fund AS winner_payout
+            FROM funds f, room_data rd
         ),
         upd_room AS (
             UPDATE rooms
@@ -942,6 +962,8 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
         escrow_zero AS (
             UPDATE room_escrow
             SET amount = 0,
+                stake_amount = 0,
+                boost_amount = 0,
                 updated_at = NOW()
             WHERE room_id = %s AND EXISTS (SELECT 1 FROM upd_room)
             RETURNING amount
@@ -956,11 +978,13 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 (SELECT winner_payout FROM calc),
                 jsonb_build_object(
                     'total_fund', (SELECT total_fund FROM calc),
+                    'stake_fund', (SELECT stake_fund FROM calc),
+                    'boost_fund', (SELECT boost_fund FROM calc),
                     'rank_percent', (SELECT rank FROM room_data),
                     'casino_cut', (SELECT casino_cut FROM calc),
                     'prize_pool', (SELECT prize_pool FROM calc),
                     'winner_payout_percent_applied', 100,
-                    'payout_rule', 'prize_pool_after_rake'
+                    'payout_rule', 'stake_after_rake_plus_boosts'
                 )
             WHERE EXISTS (SELECT 1 FROM upd_room) AND (SELECT winner_payout FROM calc) > 0
             RETURNING 1
@@ -975,6 +999,8 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 (SELECT (total_fund - winner_payout) FROM calc),
                 jsonb_build_object(
                     'total_fund', (SELECT total_fund FROM calc),
+                    'stake_fund', (SELECT stake_fund FROM calc),
+                    'boost_fund', (SELECT boost_fund FROM calc),
                     'casino_cut', (SELECT casino_cut FROM calc),
                     'rank_percent', (SELECT rank FROM room_data),
                     'winner_payout_percent_applied', 100,
@@ -993,6 +1019,8 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
                 -(SELECT total_fund FROM calc),
                 jsonb_build_object(
                     'total_fund', (SELECT total_fund FROM calc),
+                    'stake_fund', (SELECT stake_fund FROM calc),
+                    'boost_fund', (SELECT boost_fund FROM calc),
                     'winner_payout', (SELECT winner_payout FROM calc),
                     'rank_percent', (SELECT rank FROM room_data),
                     'winner_payout_percent_applied', 100,
@@ -1006,11 +1034,11 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
             (SELECT winner_id FROM upd_room) AS winner_id,
             (SELECT ended_at FROM upd_room) AS ended_at,
             (SELECT total_fund FROM calc) AS total_fund,
+            (SELECT stake_fund FROM calc) AS stake_fund,
+            (SELECT boost_fund FROM calc) AS boost_fund,
             (SELECT casino_cut FROM calc) AS casino_cut,
             (SELECT winner_payout FROM calc) AS winner_payout
     """, (
-        int(room_id),
-        int(room_id),
         int(room_id),
         int(room_id),
         int(room_id),
@@ -1076,6 +1104,7 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
         escrow_upd AS (
             UPDATE room_escrow
             SET amount = amount + (SELECT join_cost FROM allowed),
+                stake_amount = stake_amount + (SELECT join_cost FROM allowed),
                 updated_at = NOW()
             WHERE room_id = %s AND EXISTS (SELECT 1 FROM ins)
             RETURNING amount
@@ -1211,6 +1240,7 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
         escrow_upd AS (
             UPDATE room_escrow
             SET amount = amount + (SELECT boost_cost FROM allowed),
+                boost_amount = boost_amount + (SELECT boost_cost FROM allowed),
                 updated_at = NOW()
             WHERE room_id = %s AND EXISTS (SELECT 1 FROM upd)
             RETURNING amount

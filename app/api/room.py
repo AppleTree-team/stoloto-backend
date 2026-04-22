@@ -19,7 +19,7 @@ from app.services.room_service import (
     finish_lobby_to_shop_if_lobby,
     get_room_total_weight,
     get_room_victory_chance,
-    get_room_escrow_amount,
+    get_room_escrow_snapshot,
     start_game_if_shop,
     finish_game_and_pick_winner_if_running,
     shop_buy_slot as shop_buy_slot_service,
@@ -338,9 +338,11 @@ async def get_shop(
 
             now_mono = time.monotonic()
             if now_mono - last_tick_sent >= 10:
-                total_fund = get_room_escrow_amount(room_id)
-                casino_cut = int(total_fund * (float(current_room["rank"]) / 100.0))
-                prize_pool = total_fund - casino_cut
+                escrow = get_room_escrow_snapshot(room_id)
+                stake_fund = int(escrow.get("stake_amount") or 0)
+                boost_fund = int(escrow.get("boost_amount") or 0)
+                casino_cut = int(stake_fund * (float(current_room["rank"]) / 100.0))
+                prize_pool = max(0, stake_fund - casino_cut) + boost_fund
                 chance = get_room_victory_chance(room_id, profile["id"])
 
                 yield sse("tick", {
@@ -353,6 +355,8 @@ async def get_shop(
                     "total_weight": total_weight,
                     "victory_chance_percent": chance.get("chance_capacity_percent") if chance.get("success") else None,
                     "victory_chance_current_percent": chance.get("chance_current_percent") if chance.get("success") else None,
+                    "stake_fund": stake_fund,
+                    "boost_fund": boost_fund,
                     "prize_pool": prize_pool,
                 })
                 last_tick_sent = now_mono
