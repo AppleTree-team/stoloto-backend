@@ -295,7 +295,7 @@ def get_lobby_seconds_left(room_id: int) -> Optional[int]:
 
 def get_room_total_weight(room_id: int) -> int:
     result = fetch_one("""
-        SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int AS total_weight
+        SELECT COALESCE(SUM(100 + COALESCE(boost, 0)), 0)::int AS total_weight
         FROM room_members
         WHERE room_id = %s
     """, (room_id,))
@@ -314,8 +314,8 @@ def get_room_victory_chance(room_id: int, user_id: int) -> Dict[str, Any]:
         SELECT
             rp.max_members_count::int AS max_members_count,
             (SELECT COUNT(*)::int FROM room_members WHERE room_id = %s) AS members_count,
-            (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
-            (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
+            (SELECT COALESCE(SUM(100 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
+            (SELECT COALESCE(SUM(100 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.id = %s
@@ -332,7 +332,8 @@ def get_room_victory_chance(room_id: int, user_id: int) -> Dict[str, Any]:
     free_slots = max(0, max_members_count - members_count)
 
     chance_current = (user_weight / total_weight) if total_weight > 0 else 0.0
-    denom_capacity = total_weight + free_slots
+    # Свободные места считаем как "слоты без буста" с весом 100
+    denom_capacity = total_weight + (100 * free_slots)
     chance_capacity = (user_weight / denom_capacity) if denom_capacity > 0 else 0.0
 
     return {
@@ -432,9 +433,9 @@ def finish_shop_and_pick_winner(room_id: int) -> Optional[Dict[str, Any]]:
             SELECT
                 rm.id,
                 rm.user_id,
-                (1 + COALESCE(rm.boost, 0))::int AS weight,
-                SUM((1 + COALESCE(rm.boost, 0))::int) OVER () AS total_weight,
-                SUM((1 + COALESCE(rm.boost, 0))::int) OVER (ORDER BY rm.id) AS cum_weight
+                (100 + COALESCE(rm.boost, 0))::int AS weight,
+                SUM((100 + COALESCE(rm.boost, 0))::int) OVER () AS total_weight,
+                SUM((100 + COALESCE(rm.boost, 0))::int) OVER (ORDER BY rm.id) AS cum_weight
             FROM room_members rm
             WHERE rm.room_id = %s
         ),
@@ -663,9 +664,9 @@ def finish_game_and_pick_winner_if_running(room_id: int) -> Optional[Dict[str, A
             SELECT
                 rm.id,
                 rm.user_id,
-                (1 + COALESCE(rm.boost, 0))::int AS weight,
-                SUM((1 + COALESCE(rm.boost, 0))::int) OVER () AS total_weight,
-                SUM((1 + COALESCE(rm.boost, 0))::int) OVER (ORDER BY rm.id) AS cum_weight
+                (100 + COALESCE(rm.boost, 0))::int AS weight,
+                SUM((100 + COALESCE(rm.boost, 0))::int) OVER () AS total_weight,
+                SUM((100 + COALESCE(rm.boost, 0))::int) OVER (ORDER BY rm.id) AS cum_weight
             FROM room_members rm
             WHERE rm.room_id = %s
         ),
@@ -828,15 +829,15 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
         counts AS (
             SELECT
                 (SELECT COUNT(*)::int FROM room_members WHERE room_id = %s) AS members_count,
-                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
-                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
+                (SELECT COALESCE(SUM(100 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
+                (SELECT COALESCE(SUM(100 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
         ),
         allowed AS (
             SELECT
                 (rd.status = 'shop') AS ok_status,
                 (EXISTS (SELECT 1 FROM existing_user)) AS ok_member,
                 (c.members_count < rd.max_members_count) AS ok_capacity,
-                ((c.user_weight + 1) * 2 <= (c.total_weight + GREATEST(0, rd.max_members_count - c.members_count))) AS ok_chance,
+                ((c.user_weight + 100) * 2 <= (c.total_weight + (100 * GREATEST(0, rd.max_members_count - c.members_count)))) AS ok_chance,
                 rd.join_cost AS join_cost,
                 rd.max_members_count AS max_members_count,
                 c.members_count AS members_count,
@@ -898,8 +899,8 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             (SELECT max_members_count FROM allowed) AS max_members_count,
             ((SELECT members_count FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS members_count_after,
             ((SELECT max_members_count FROM allowed) - ((SELECT members_count FROM allowed) + (SELECT COUNT(*)::int FROM ins))) AS free_slots_after,
-            ((SELECT user_weight FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS user_weight_after,
-            ((SELECT total_weight FROM allowed) + (SELECT COUNT(*)::int FROM ins)) AS total_weight_after,
+            ((SELECT user_weight FROM allowed) + (100 * (SELECT COUNT(*)::int FROM ins))) AS user_weight_after,
+            ((SELECT total_weight FROM allowed) + (100 * (SELECT COUNT(*)::int FROM ins))) AS total_weight_after,
             (SELECT amount FROM escrow_upd) AS escrow_amount_after
         FROM allowed
     """, (
@@ -968,16 +969,16 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
         ),
         weights AS (
             SELECT
-                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
+                (SELECT COALESCE(SUM(100 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s) AS total_weight,
                 (SELECT COUNT(*)::int FROM room_members WHERE room_id = %s) AS members_count,
-                (SELECT COALESCE(SUM(1 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
+                (SELECT COALESCE(SUM(100 + COALESCE(boost, 0)), 0)::int FROM room_members WHERE room_id = %s AND user_id = %s) AS user_weight
         ),
         allowed AS (
             SELECT
                 (SELECT status = 'shop' FROM room_data) AS ok_status,
                 (SELECT COUNT(*) = 1 FROM slot WHERE user_id = %s) AS ok_owner,
                 (SELECT boost = 0 FROM slot) AS ok_unboosted,
-                ((w.user_weight + %s) * 2 <= ((w.total_weight + GREATEST(0, (SELECT max_members_count FROM room_data) - w.members_count)) + %s)) AS ok_chance,
+                ((w.user_weight + %s) * 2 <= ((w.total_weight + (100 * GREATEST(0, (SELECT max_members_count FROM room_data) - w.members_count))) + %s)) AS ok_chance,
                 ((SELECT boost_cost_per_point FROM room_data) * %s)::bigint AS boost_cost,
                 w.total_weight AS total_weight,
                 w.user_weight AS user_weight

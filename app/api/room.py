@@ -25,6 +25,7 @@ from app.services.room_service import (
     finish_game_and_pick_winner_if_running,
     shop_buy_slot as shop_buy_slot_service,
     shop_buy_boost as shop_buy_boost_service,
+    get_user_slots_in_room,
 )
 
 from typing import Optional
@@ -110,11 +111,13 @@ def get_room(
 
     players = get_room_members(room["id"])
     chance = get_room_victory_chance(room["id"], profile["id"])
+    my_slots = get_user_slots_in_room(room["id"], profile["id"])
 
     return {
         "id": room["id"],
         "status": room["status"],
         "players": players,
+        "my_slots": [{"slot_id": s["id"], "boost": s["boost"]} for s in (my_slots or [])],
         "game": room["game"],
         "join_cost": room["join_cost"],
         "max_members_count": room.get("max_members_count"),
@@ -358,6 +361,7 @@ async def get_shop(
                 casino_cut = int(stake_fund * (float(current_room["rank"]) / 100.0))
                 prize_pool = max(0, stake_fund - casino_cut) + boost_fund
                 chance = get_room_victory_chance(room_id, profile["id"])
+                my_slots = get_user_slots_in_room(room_id, profile["id"])
 
                 yield sse("tick", {
                     "room_id": room_id,
@@ -369,6 +373,7 @@ async def get_shop(
                     "total_weight": total_weight,
                     "victory_chance_percent": chance.get("chance_capacity_percent") if chance.get("success") else None,
                     "victory_chance_current_percent": chance.get("chance_current_percent") if chance.get("success") else None,
+                    "my_slots": [{"slot_id": s["id"], "boost": s["boost"]} for s in (my_slots or [])],
                     "stake_fund": stake_fund,
                     "boost_fund": boost_fund,
                     "prize_pool": prize_pool,
@@ -402,7 +407,7 @@ def shop_buy_boost_on_slot(
     """
 
     if not slot_id:
-        raise HTTPException(status_code=400, detail="slot_id is required")
+        raise HTTPException(status_code=400, detail="slot_id is required (pick one of your my_slots from GET /room/{token} or SSE tick)")
 
     if boost <= 0:
         raise HTTPException(status_code=400, detail="boost must be > 0")
