@@ -173,7 +173,6 @@
 #         WHERE room_id = %s
 #     """, (room_id,))["count"]
 #
-#     return count >= pattern["min_bots_count"]
 #
 #
 # # =========================================================
@@ -376,7 +375,10 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
       - message: str (если success=False)
     """
     result = execute_with_returning("""
-        WITH locked AS (
+        WITH user_locked AS (
+            SELECT pg_advisory_xact_lock(%s, 2)
+        ),
+        locked AS (
             SELECT pg_advisory_xact_lock(%s, 1)
         ),
         room_data AS (
@@ -384,6 +386,16 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
             FROM rooms r
             JOIN room_pattern rp ON rp.id = r.room_pattern_id
             WHERE r.id = %s
+        ),
+        other_active AS (
+            SELECT r.id AS active_room_id, r.access_token AS active_room_access_token, r.status AS active_room_status
+            FROM room_members rm
+            JOIN rooms r ON r.id = rm.room_id
+            WHERE rm.user_id = %s
+              AND r.status IN ('waiting', 'lobby', 'shop', 'running')
+              AND r.id <> %s
+            ORDER BY COALESCE(r.started_at, r.created_at) DESC, r.id DESC
+            LIMIT 1
         ),
         existing AS (
             SELECT rm.id
@@ -398,6 +410,10 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
             SELECT
                 (rd.status IN ('waiting', 'lobby')) AS ok_status,
                 (c.members_count < rd.max_members_count) AS ok_capacity,
+                (NOT EXISTS (SELECT 1 FROM other_active)) AS ok_user_free,
+                (SELECT active_room_id FROM other_active) AS active_room_id,
+                (SELECT active_room_access_token FROM other_active) AS active_room_access_token,
+                (SELECT active_room_status FROM other_active) AS active_room_status,
                 rd.join_cost AS join_cost
             FROM room_data rd, counts c
         ),
@@ -408,7 +424,7 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
               AND is_bot = FALSE
               AND balance >= (SELECT join_cost FROM allowed)
               AND NOT EXISTS (SELECT 1 FROM existing)
-              AND (SELECT ok_status AND ok_capacity FROM allowed)
+              AND (SELECT ok_status AND ok_capacity AND ok_user_free FROM allowed)
             RETURNING id
         ),
         ins AS (
@@ -450,12 +466,19 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
             (EXISTS (SELECT 1 FROM existing)) AS already_joined,
             (SELECT ok_status FROM allowed) AS ok_status,
             (SELECT ok_capacity FROM allowed) AS ok_capacity,
+            (SELECT ok_user_free FROM allowed) AS ok_user_free,
+            (SELECT active_room_id FROM allowed) AS active_room_id,
+            (SELECT active_room_access_token FROM allowed) AS active_room_access_token,
+            (SELECT active_room_status FROM allowed) AS active_room_status,
             (SELECT join_cost FROM allowed) AS join_cost,
             (SELECT id FROM ins) AS slot_id,
             (SELECT COUNT(*)::int FROM ins) AS inserted
     """, (
-        int(room_id),  # lock
+        int(user_id),  # user lock
+        int(room_id),  # room lock
         int(room_id),  # room_data
+        int(user_id),  # other_active.user_id
+        int(room_id),  # other_active.exclude room_id
         int(room_id),  # existing.room_id
         int(user_id),  # existing.user_id
         int(room_id),  # counts.room_id
@@ -478,6 +501,7 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
 
     ok_status = bool(result.get("ok_status"))
     ok_capacity = bool(result.get("ok_capacity"))
+    ok_user_free = bool(result.get("ok_user_free"))
     inserted = bool(result.get("inserted"))
 
     if inserted:
@@ -487,6 +511,14 @@ def ensure_user_added_to_room_once(room_id: int, user_id: int) -> Dict[str, Any]
         return {"success": False, "message": "Room is not joinable now"}
     if not ok_capacity:
         return {"success": False, "message": "No free slots"}
+    if not ok_user_free:
+        return {
+            "success": False,
+            "message": "User already in active game",
+            "active_room_id": result.get("active_room_id"),
+            "active_room_access_token": result.get("active_room_access_token"),
+            "active_room_status": result.get("active_room_status"),
+        }
     return {"success": False, "message": "Not enough balance"}
 
 
@@ -1054,7 +1086,10 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
     Ограничение: шанс пользователя (слоты + бусты) не должен стать > 50%.
     """
     result = execute_with_returning("""
-        WITH locked AS (
+        WITH user_locked AS (
+            SELECT pg_advisory_xact_lock(%s, 2)
+        ),
+        locked AS (
             SELECT pg_advisory_xact_lock(%s, 1)
         ),
         room_data AS (
@@ -1062,6 +1097,12 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             FROM rooms r
             JOIN room_pattern rp ON rp.id = r.room_pattern_id
             WHERE r.id = %s
+        ),
+        existing_user AS (
+            SELECT 1
+            FROM room_members
+            WHERE room_id = %s AND user_id = %s
+            LIMIT 1
         ),
         counts AS (
             SELECT
@@ -1072,6 +1113,7 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
         allowed AS (
             SELECT
                 (rd.status = 'shop') AS ok_status,
+                (EXISTS (SELECT 1 FROM existing_user)) AS ok_member,
                 (c.members_count < rd.max_members_count) AS ok_capacity,
                 ((c.user_weight + 1) * 2 <= (c.total_weight + GREATEST(0, rd.max_members_count - c.members_count))) AS ok_chance,
                 rd.join_cost AS join_cost,
@@ -1087,7 +1129,7 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             WHERE id = %s
               AND is_bot = FALSE
               AND balance >= (SELECT join_cost FROM allowed)
-              AND (SELECT ok_status AND ok_capacity AND ok_chance FROM allowed)
+              AND (SELECT ok_status AND ok_member AND ok_capacity AND ok_chance FROM allowed)
             RETURNING id
         ),
         ins AS (
@@ -1129,6 +1171,7 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             (SELECT COUNT(*)::int FROM ins) AS inserted,
             (SELECT id FROM ins) AS slot_id,
             (SELECT ok_status FROM allowed) AS ok_status,
+            (SELECT ok_member FROM allowed) AS ok_member,
             (SELECT ok_capacity FROM allowed) AS ok_capacity,
             (SELECT ok_chance FROM allowed) AS ok_chance,
             (SELECT max_members_count FROM allowed) AS max_members_count,
@@ -1139,8 +1182,11 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
             (SELECT amount FROM escrow_upd) AS escrow_amount_after
         FROM allowed
     """, (
+        int(user_id),
         int(room_id),
         int(room_id),
+        int(room_id),
+        int(user_id),
         int(room_id),
         int(room_id),
         int(room_id),
@@ -1161,6 +1207,7 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
 
     inserted = bool(result.get("inserted"))
     ok_status = bool(result.get("ok_status"))
+    ok_member = bool(result.get("ok_member"))
     ok_capacity = bool(result.get("ok_capacity"))
     ok_chance = bool(result.get("ok_chance"))
 
@@ -1169,6 +1216,8 @@ def shop_buy_slot(room_id: int, user_id: int) -> Dict[str, Any]:
 
     if not ok_status:
         return {"success": False, "message": "Shop is not available now", **result}
+    if not ok_member:
+        return {"success": False, "message": "User is not in this room", **result}
     if not ok_capacity:
         return {"success": False, "message": "No free slots", **result}
     if not ok_chance:

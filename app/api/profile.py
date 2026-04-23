@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user_profile, require_session_payload
-from app.services.user_service import get_user_game_history
+from app.services.user_service import get_user_game_history, get_user_current_game
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -42,4 +42,20 @@ def profile_history(
         "user_id": profile["id"],
         "count": len(history),
         "items": history,
+    }
+
+
+@router.get("/current_game")
+def profile_current_game(
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
+):
+    """
+    Получить текущую активную игру пользователя для возврата в неё.
+    """
+    current_game = get_user_current_game(profile["id"])
+    return {
+        "user_id": profile["id"],
+        "has_active_game": bool(current_game),
+        "item": current_game,
     }

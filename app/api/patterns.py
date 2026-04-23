@@ -1,10 +1,11 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, Body, HTTPException, Query
+
 from app.services import pattern_service
 from app.api.deps import get_current_user_profile, require_session_payload, ensure_admin
 
-router = APIRouter(prefix="/patterns", tags=["Patterns"])
 
+router = APIRouter(prefix="/patterns", tags=["Patterns"])
 
 
 def check_pattern_exists(pattern_id):
@@ -12,11 +13,6 @@ def check_pattern_exists(pattern_id):
     existing = pattern_service.get_pattern_by_id(pattern_id)
     if not existing or not existing["is_active"]:
         raise HTTPException(status_code=404, detail="Pattern not found")
-
-
-
-
-
 
 
 @router.get("/limit")
@@ -52,15 +48,9 @@ def update_limit(
     Установить новое максимальное количество комнат (лимит).
 
     **Параметр пути:**
-        - `new_limit` (int): Новое значение лимита (должно быть положительным целым).
+        - `new_limit` (int): Новое значение лимита.
 
     **Требования:** права администратора.
-
-    Возвращает:
-        - 200: { "status": "success", "message": "Max rooms count updated" }
-        - 400: Некорректное значение (если сервис проверяет)
-        - 401: Неавторизован
-        - 403: Доступ запрещён
     """
     ensure_admin(profile)
     pattern_service.set_max_rooms_count(new_limit)
@@ -78,52 +68,39 @@ def get_patterns(
 ):
     """
     Получить все паттерны (только для администратора).
-
-    Параметры запроса (query):
-        - disabled (bool): Если true — возвращает только неактивные паттерны.
-          По умолчанию false.
-
-    Возвращает:
-        - 200: Список паттернов (активных или неактивных в зависимости от disabled)
-        - 401: Неавторизован
-        - 403: Доступ запрещён
     """
     ensure_admin(profile)
     if disabled is not None:
         return pattern_service.get_all_disabled_patterns()
-    else:
-        return pattern_service.get_all_active_patterns()
+    return pattern_service.get_all_active_patterns()
 
 
 @router.post("/")
 def create_pattern(
-        data: dict = Body(...),
-        profile: dict = Depends(get_current_user_profile),
-        _payload: dict = Depends(require_session_payload),
+    data: dict = Body(...),
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
 ):
     """
     Создать новый паттерн (только для администратора).
 
     Тело запроса (JSON):
-    - game (str): Название игры (например, "poker")
-    - join_cost (int): Стоимость входа
-    - max_members_count (int): Максимум участников (2-10)
-    - rank (str): Ранг комнаты (например, "beginner")
-    - min_bots_count (int): Минимальное количество ботов
-    - max_bots_count (int): Максимальное количество ботов
-    - waiting_lobby_stage (int): Время ожидания в лобби (секунды)
-    - waiting_shop_stage (int): Время ожидания в магазине (секунды)
-    - max_rooms_count (int): Максимальное количество комнат
-    - weight (float): Вес для матчинга (0-1)
-
-    Возвращает:
-        - 200: { "status": "success", "message": "...", "id": <id_паттерна> }
-        - 400: Неверные данные
-        - 401: Неавторизован
-        - 403: Доступ запрещён
+    - game (str): название игры
+    - join_cost (int): стоимость входа
+    - max_members_count (int): максимум участников
+    - rank (float): рейк казино в процентах
+    - waiting_lobby_stage (int): время ожидания в lobby
+    - waiting_shop_stage (int): время ожидания в shop
+    - max_rooms_count (int): максимум комнат для паттерна
+    - weight (float): вес для матчмейкинга, должен быть > 0
+    - boost_cost_per_point (int): стоимость 1 поинта буста
+    - winner_payout_percent (int): историческое поле, сейчас используется как 100
     """
     ensure_admin(profile)
-    pattern_id = pattern_service.create_pattern(data)
+    try:
+        pattern_id = pattern_service.create_pattern(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {
         "status": "success",
         "message": "Pattern created successfully",
@@ -133,28 +110,20 @@ def create_pattern(
 
 @router.put("/{pattern_id}")
 def update_pattern(
-        pattern_id: int,
-        data: dict = Body(...),
-        profile: dict = Depends(get_current_user_profile),
-        _payload: dict = Depends(require_session_payload),
+    pattern_id: int,
+    data: dict = Body(...),
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
 ):
     """
     Полностью обновить существующий паттерн (только для администратора).
-
-    Параметр пути:
-        - pattern_id (int): ID обновляемого паттерна.
-
-    Тело запроса: те же поля, что и в POST /patterns (все обязательны).
-
-    Возвращает:
-        - 200: { "status": "success", "message": "...", "id": <id_новой_версии> }
-        - 404: Паттерн не найден или неактивен
-        - 401: Неавторизован
-        - 403: Доступ запрещён
     """
     ensure_admin(profile)
     check_pattern_exists(pattern_id)
-    updated_id = pattern_service.update_pattern(pattern_id, data)
+    try:
+        updated_id = pattern_service.update_pattern(pattern_id, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {
         "status": "success",
         "message": "Pattern updated successfully",
@@ -164,23 +133,12 @@ def update_pattern(
 
 @router.delete("/{pattern_id}")
 def delete_pattern(
-        pattern_id: int,
-        profile: dict = Depends(get_current_user_profile),
-        _payload: dict = Depends(require_session_payload),
+    pattern_id: int,
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
 ):
     """
     Мягкое удаление паттерна по ID (только для администратора).
-
-    Параметр пути:
-        - pattern_id (int): ID удаляемого паттерна.
-
-    Помечает паттерн как неактивный (мягкое удаление). Остаётся в базе данных для истории.
-
-    Возвращает:
-        - 200: { "status": "success", "message": "...", "id": <pattern_id> }
-        - 404: Паттерн не найден или уже неактивен
-        - 401: Неавторизован
-        - 403: Доступ запрещён
     """
     ensure_admin(profile)
     check_pattern_exists(pattern_id)

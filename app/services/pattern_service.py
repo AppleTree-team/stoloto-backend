@@ -3,6 +3,16 @@ from typing import List, Dict, Any, Optional
 from app.db.db import fetch_one, fetch_all, execute, execute_with_returning
 
 
+def _validate_pattern_payload(data: Dict[str, Any]) -> None:
+    try:
+        weight = float(data.get("weight"))
+    except (TypeError, ValueError):
+        raise ValueError("Pattern weight must be greater than 0")
+
+    if weight <= 0:
+        raise ValueError("Pattern weight must be greater than 0")
+
+
 # =========================================
 # ⚙️ SYSTEM CONFIG
 # =========================================
@@ -79,6 +89,7 @@ def get_pattern_by_game_and_cost(game: str, min_cost: int, max_cost: int) -> Opt
         WHERE game = %s 
         AND join_cost BETWEEN %s AND %s
         AND is_active = TRUE
+        AND weight > 0
         ORDER BY -LN(RANDOM()) / weight
         LIMIT 1
     """, (game, min_cost, max_cost))
@@ -92,6 +103,7 @@ def create_pattern(data: Dict[str, Any]) -> int:
     """
     Создаёт новый паттерн (всегда новая запись)
     """
+    _validate_pattern_payload(data)
     data.setdefault("boost_cost_per_point", 10)
     data.setdefault("winner_payout_percent", 100)
     query = """
@@ -100,8 +112,6 @@ def create_pattern(data: Dict[str, Any]) -> int:
             join_cost,
             max_members_count,
             rank,
-            min_bots_count,
-            max_bots_count,
             waiting_lobby_stage,
             waiting_shop_stage,
             max_rooms_count,
@@ -115,8 +125,6 @@ def create_pattern(data: Dict[str, Any]) -> int:
             %(join_cost)s,
             %(max_members_count)s,
             %(rank)s,
-            %(min_bots_count)s,
-            %(max_bots_count)s,
             %(waiting_lobby_stage)s,
             %(waiting_shop_stage)s,
             %(max_rooms_count)s,

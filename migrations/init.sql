@@ -25,15 +25,13 @@ CREATE TABLE room_pattern (
 
     max_members_count INTEGER NOT NULL DEFAULT 10,
     rank FLOAT NOT NULL,
-    min_bots_count INTEGER NOT NULL DEFAULT 1,
-    max_bots_count INTEGER NOT NULL DEFAULT 9,
 
     waiting_lobby_stage INTEGER NOT NULL DEFAULT 60,
     waiting_shop_stage INTEGER NOT NULL DEFAULT 30,
 
     max_rooms_count INTEGER NOT NULL DEFAULT 50,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    weight INTEGER NOT NULL DEFAULT 1,
+    weight INTEGER NOT NULL DEFAULT 1 CHECK (weight > 0),
 
     -- Финансы
     boost_cost_per_point BIGINT NOT NULL DEFAULT 10 CHECK (boost_cost_per_point >= 0),
@@ -136,11 +134,12 @@ SELECT
 FROM generate_series(1, 100) AS i;
 
 -- Заполнение таблицы паттернов
-INSERT INTO room_pattern (game, join_cost, max_members_count, rank, min_bots_count, max_bots_count, waiting_lobby_stage, waiting_shop_stage, boost_cost_per_point, winner_payout_percent)
+INSERT INTO room_pattern (game, join_cost, max_members_count, rank, waiting_lobby_stage, waiting_shop_stage, boost_cost_per_point, winner_payout_percent)
 VALUES
-('wheel',   100, 10, 20.0, 2, 5, 60, 30, 10, 100),
-('aviator', 200, 8,  20.0, 1, 4, 45, 20, 10, 100),
-('plinko',  50,  6,  20.0, 1, 3, 30, 15, 10, 100);
+('wheel',   100, 10, 20.0, 60, 30, 10, 100),
+('aviator', 200, 8,  20.0, 45, 20, 10, 100),
+('plinko',  50,  6,  20.0, 30, 15, 10, 100),
+('minesweeper', 50, 6, 20.0, 30, 15, 10, 100);
 
 
 

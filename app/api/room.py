@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_current_user_profile, require_session_payload
 from app.services.matchmaking_service import find_room_for_user
+from app.services.user_service import get_user_current_game
 from app.services.room_service import (
     get_room_by_token,
     get_room_members,
@@ -64,12 +65,27 @@ def search_room(
     #return {
     #    "room_access_token": room["access_token"]
     #}
+    current_game = get_user_current_game(profile["id"])
+    if current_game:
+        return {
+            "already_in_game": True,
+            "room": {
+                "id": current_game.get("room_id"),
+                "access_token": current_game.get("room_access_token"),
+                "status": current_game.get("status"),
+                "game": current_game.get("game"),
+                "join_cost": current_game.get("join_cost"),
+                "max_members_count": current_game.get("max_members_count"),
+            },
+        }
+
     result = find_room_for_user(data.game, data.min_cost, data.max_cost)
 
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
 
     return {
+        "already_in_game": False,
         "room": result["room"]
     }
 
@@ -147,6 +163,12 @@ async def get_lobby(
     if room["status"] == "lobby":
         join_result = ensure_user_added_to_room_once(room["id"], profile["id"])
         if not join_result.get("success"):
+            if join_result.get("message") == "User already in active game":
+                raise HTTPException(status_code=409, detail={
+                    "message": join_result.get("message"),
+                    "active_room_access_token": join_result.get("active_room_access_token"),
+                    "active_room_status": join_result.get("active_room_status"),
+                })
             raise HTTPException(status_code=400, detail=join_result.get("message", "Join failed"))
 
     def sse(event: str, data: dict) -> str:

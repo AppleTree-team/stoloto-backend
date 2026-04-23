@@ -88,3 +88,79 @@ def get_user_game_history(user_id: int, limit: int = 20):
         history = [history] if history else []
 
     return history
+
+
+def get_user_current_game(user_id: int):
+    """Получить текущую активную игру пользователя, если она есть."""
+    current_game = fetch_one(
+        """
+        WITH member_rooms AS (
+            SELECT
+                rm.room_id,
+                COUNT(*)::int AS slots_count,
+                COALESCE(SUM(rm.boost), 0)::int AS total_boost,
+                COALESCE(SUM(1 + COALESCE(rm.boost, 0)), 0)::int AS total_weight,
+                MAX(rm.joined_at) AS last_joined_at
+            FROM room_members rm
+            WHERE rm.user_id = %s
+            GROUP BY rm.room_id
+        ),
+        user_ledger AS (
+            SELECT
+                le.room_id,
+                COALESCE(SUM(
+                    CASE
+                        WHEN le.user_id = %s AND le.account = 'user' AND le.amount < 0
+                        THEN -le.amount
+                        ELSE 0
+                    END
+                ), 0)::bigint AS spent_amount,
+                COALESCE(SUM(
+                    CASE
+                        WHEN le.user_id = %s AND le.entry_type = 'payout'
+                        THEN le.amount
+                        ELSE 0
+                    END
+                ), 0)::bigint AS payout_amount
+            FROM ledger_entries le
+            WHERE le.room_id IN (SELECT room_id FROM member_rooms)
+              AND le.user_id = %s
+            GROUP BY le.room_id
+        )
+        SELECT
+            r.id AS room_id,
+            r.access_token AS room_access_token,
+            r.status,
+            r.created_at,
+            r.started_at,
+            r.ended_at,
+            rp.game,
+            rp.join_cost,
+            rp.rank,
+            rp.max_members_count,
+            mr.slots_count,
+            mr.total_boost,
+            mr.total_weight,
+            COALESCE(ul.spent_amount, 0)::bigint AS spent_amount,
+            COALESCE(ul.payout_amount, 0)::bigint AS payout_amount,
+            (COALESCE(ul.payout_amount, 0) - COALESCE(ul.spent_amount, 0))::bigint AS net_amount,
+            CASE
+                WHEN r.status IN ('waiting', 'lobby') THEN 'lobby'
+                ELSE 'shop'
+            END AS resume_stage,
+            CASE
+                WHEN r.status IN ('waiting', 'lobby') THEN '/game/' || r.access_token || '/lobby'
+                ELSE '/game/' || r.access_token || '/shop'
+            END AS resume_path
+        FROM member_rooms mr
+        JOIN rooms r ON r.id = mr.room_id
+        JOIN room_pattern rp ON rp.id = r.room_pattern_id
+        LEFT JOIN user_ledger ul ON ul.room_id = mr.room_id
+        WHERE r.status IN ('waiting', 'lobby', 'shop', 'running')
+        ORDER BY COALESCE(r.started_at, mr.last_joined_at, r.created_at) DESC, r.id DESC
+        LIMIT 1
+        """,
+        (user_id, user_id, user_id, user_id)
+    )
+
+    return current_game

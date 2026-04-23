@@ -6,12 +6,46 @@ from app.db.db import get_connection
 
 _DDL: Iterable[str] = (
     """
+    DO $$
+    BEGIN
+      ALTER TYPE games ADD VALUE IF NOT EXISTS 'minesweeper';
+    EXCEPTION
+      WHEN undefined_object THEN NULL;
+    END $$;
+    """,
+    """
     ALTER TABLE system_config
     ADD COLUMN IF NOT EXISTS casino_balance BIGINT NOT NULL DEFAULT 0 CHECK (casino_balance >= 0)
     """,
     """
     ALTER TABLE room_pattern
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP
+    """,
+    """
+    ALTER TABLE room_pattern
+    DROP COLUMN IF EXISTS min_bots_count
+    """,
+    """
+    ALTER TABLE room_pattern
+    DROP COLUMN IF EXISTS max_bots_count
+    """,
+    """
+    UPDATE room_pattern
+    SET weight = 1
+    WHERE weight IS NULL OR weight <= 0
+    """,
+    """
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'room_pattern_weight_positive'
+      ) THEN
+        ALTER TABLE room_pattern
+        ADD CONSTRAINT room_pattern_weight_positive CHECK (weight > 0);
+      END IF;
+    END $$;
     """,
     """
     ALTER TABLE room_pattern
@@ -85,6 +119,43 @@ _DDL: Iterable[str] = (
         WHERE id = 1;
       END IF;
     END $$;
+    """,
+    """
+    INSERT INTO room_pattern (
+        game,
+        join_cost,
+        max_members_count,
+        rank,
+        waiting_lobby_stage,
+        waiting_shop_stage,
+        max_rooms_count,
+        is_active,
+        weight,
+        boost_cost_per_point,
+        winner_payout_percent
+    )
+    SELECT
+        'minesweeper',
+        50,
+        6,
+        20.0,
+        30,
+        15,
+        50,
+        TRUE,
+        1,
+        10,
+        100
+    WHERE EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'room_pattern'
+    )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM room_pattern
+        WHERE game = 'minesweeper' AND is_active = TRUE
+      )
     """,
 )
 

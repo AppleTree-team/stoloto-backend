@@ -11,7 +11,7 @@ class Room(BaseModel):
     ended_at: Optional[datetime] = None
     status: RoomStatus = RoomStatus.waiting
     winner_id: Optional[int] = None
-    websocket_access_token: str
+    access_token: str
 
 
 #room search
