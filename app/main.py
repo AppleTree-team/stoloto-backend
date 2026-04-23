@@ -1,7 +1,5 @@
 from fastapi import FastAPI, APIRouter
-from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Request
 import uvicorn
 
 

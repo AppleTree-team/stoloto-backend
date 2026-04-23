@@ -95,6 +95,63 @@ def get_pattern_by_game_and_cost(game: str, min_cost: int, max_cost: int) -> Opt
     """, (game, min_cost, max_cost))
 
 
+def get_top_patterns(limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Возвращает топ N паттернов по количеству реальных игроков.
+    Поля: id, game, real_players, join_cost, profit.
+    """
+    query = """
+    SELECT 
+        rp.id,
+        rp.game,
+        COUNT(DISTINCT rm.user_id) FILTER (WHERE NOT u.is_bot) AS real_players,
+        rp.join_cost,
+        COALESCE(SUM(le.amount) FILTER (WHERE le.account = 'casino' AND le.entry_type = 'casino_income'), 0) -
+        COALESCE(SUM(le.amount) FILTER (WHERE le.account = 'casino' AND le.entry_type = 'bot_slots'), 0) AS profit
+    FROM room_pattern rp
+    LEFT JOIN rooms r ON r.room_pattern_id = rp.id
+    LEFT JOIN room_members rm ON rm.room_id = r.id
+    LEFT JOIN users u ON u.id = rm.user_id
+    LEFT JOIN ledger_entries le ON le.room_id = r.id
+    WHERE rp.deleted_at IS NULL
+    GROUP BY rp.id, rp.game, rp.join_cost
+    ORDER BY real_players DESC, profit DESC
+    LIMIT %s;
+    """
+    return fetch_all(query, (limit,))
+
+def get_loss_warning_pattern_id() -> int | None:
+    """
+    Возвращает ID первого убыточного паттерна (7 дней подряд) или None.
+    """
+    query = """
+    WITH daily_profit AS (
+        SELECT 
+            r.room_pattern_id,
+            DATE(r.created_at) AS day,
+            COALESCE(SUM(le.amount), 0) AS daily_profit
+        FROM rooms r
+        JOIN ledger_entries le ON le.room_id = r.id
+        WHERE le.account = 'casino' AND le.entry_type = 'casino_income'
+          AND r.created_at > NOW() - INTERVAL '7 days'
+        GROUP BY r.room_pattern_id, DATE(r.created_at)
+    ),
+    loss_days AS (
+        SELECT 
+            room_pattern_id
+        FROM daily_profit
+        GROUP BY room_pattern_id
+        HAVING COUNT(DISTINCT day) = 7 AND BOOL_AND(daily_profit < 0) = TRUE
+    )
+    SELECT id
+    FROM room_pattern rp
+    JOIN loss_days ld ON ld.room_pattern_id = rp.id
+    WHERE rp.is_active = TRUE AND rp.deleted_at IS NULL
+    LIMIT 1
+    """
+    row = fetch_one(query)
+    return row["id"] if row else None
+
 # =========================================
 # ➕ CREATE PATTERN
 # =========================================

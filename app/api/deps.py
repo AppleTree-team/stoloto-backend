@@ -41,7 +41,7 @@ def require_session_payload(
         )
 
     request.state.jwt_payload = payload
-    return payload  # { "user_id": ..., "username": ..., "exp": ... }
+    return payload
 
 
 def get_current_user_profile(payload: dict = Depends(require_session_payload)):

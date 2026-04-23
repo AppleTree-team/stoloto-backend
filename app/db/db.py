@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from app.db.db_config import DB_CONFIG
@@ -15,24 +15,6 @@ def get_connection():
         options=f"-c timezone={timezone}"
     )
 
-
-# -------------------------
-# READ (SELECT)
-# -------------------------
-# def fetch(query, params=None):
-#     conn = None
-#     try:
-#         conn = get_connection()
-#         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-#             cursor.execute(query, params)
-#
-#             if query.strip().lower().startswith("select"):
-#                 return cursor.fetchall()
-#
-#             return None
-#     finally:
-#         if conn:
-#             conn.close()
 
 def fetch_one(query, params=None):
     """Выполняет SELECT запрос и возвращает одну строку (или None)"""

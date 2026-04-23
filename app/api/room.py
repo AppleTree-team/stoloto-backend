@@ -27,8 +27,6 @@ from app.services.room_service import (
     shop_buy_boost as shop_buy_boost_service,
 )
 
-from app.models.room import SearchRequest
-
 from typing import Optional
 
 
@@ -36,7 +34,10 @@ router = APIRouter(prefix="/room", tags=["Room"])
 shop_router = APIRouter(prefix="", tags=["Shop"])
 
 
-
+class SearchRequest(BaseModel):
+    game: str
+    min_cost: int
+    max_cost: int
 
 
 @router.post("/search")
@@ -56,15 +57,6 @@ def search_room(
         - 401: Неавторизован
     """
 
-    # здесь нужно праивильную функицю из matchmaking_service
-    #room = find_room_for_user(user_id=profile["id"])
-
-    #if not room:
-    #    raise HTTPException(status_code=400, detail="Room not available")
-
-    #return {
-    #    "room_access_token": room["access_token"]
-    #}
     current_game = get_user_current_game(profile["id"])
     if current_game:
         return {

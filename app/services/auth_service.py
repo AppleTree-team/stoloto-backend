@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from jose import jwt, JWTError
 
-from app.db.db import fetch_one, fetch_all
+from app.db.db import fetch_one
 
 
 # --------------------
