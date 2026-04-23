@@ -43,9 +43,7 @@ def _validate_pattern_payload(data: Dict[str, Any]) -> None:
         raise ValueError("Pattern weight must be greater than 0")
 
 
-# =========================================
-# ⚙️ SYSTEM CONFIG
-# =========================================
+
 
 def get_max_rooms_count() -> int:
     """
@@ -68,9 +66,7 @@ def set_max_rooms_count(new_count):
             WHERE id = 1
             """, (new_count,))
 
-# =========================================
-# 📤 GET PATTERNS
-# =========================================
+
 
 def get_all_active_patterns() -> List[Dict[str, Any]]:
     """
@@ -182,9 +178,7 @@ def get_loss_warning_pattern_id() -> int | None:
     row = fetch_one(query)
     return row["id"] if row else None
 
-# =========================================
-# ➕ CREATE PATTERN
-# =========================================
+
 
 def create_pattern(data: Dict[str, Any]) -> int:
     """

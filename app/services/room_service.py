@@ -5,9 +5,6 @@ from typing import List, Dict, Any, Optional
 from app.db.db import fetch_one, fetch_all, execute_with_returning
 
 
-# =========================================================
-# 🔧 AUXILIARY FUNCTIONS
-# =========================================================
 
 def generate_access_token() -> str:
     """Генерирует длинную случайную строку для токена комнаты."""
@@ -1138,9 +1135,7 @@ def get_room_by_pattern(pattern_id: int) -> Optional[Dict]:
     return None
 
 
-# =========================================================
-# 🔍 GET MEMBERS
-# =========================================================
+
 
 def get_room_members(room_id: int):
      return fetch_all("""
@@ -1159,9 +1154,7 @@ def get_user_slots_in_room(room_id: int, user_id: int) -> List[Dict]:
         WHERE room_id = %s AND user_id = %s
     """, (room_id, user_id))
 
-# =========================================================
-# ➕ CREATE ROOM
-# =========================================================
+
 
 def create_room(pattern_id: int) -> Dict:
     """Создаёт новую комнату (waiting), но уважает лимиты system_config.max_active_rooms и room_pattern.max_rooms_count."""
@@ -1337,8 +1330,7 @@ def join_room(room_id: int, user_id: int) -> Dict:
 
     is_first = (current_slots == 0)
 
-    #ДОБАВИЛ СТАРТ ЛОББИ
-    # 9. 🔥 СТАРТ LOBBY ТУТ
+
     if is_first:
         start_lobby(room_id)
 
