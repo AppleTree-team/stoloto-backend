@@ -17,7 +17,7 @@ def generate_access_token() -> str:
 def get_room_by_id(room_id: int):
     return fetch_one("""
         SELECT * 
-        FROM room
+        FROM rooms
         WHERE id = %s
     """, (room_id,))
 
@@ -1100,8 +1100,11 @@ def shop_buy_boost(room_id: int, user_id: int, slot_id: int, boost_value: int) -
 
 def get_all_rooms(limit=100):
     return fetch_all("""
-        SELECT r.*, rp.game, rp.join_cost
-        (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as members_count
+        SELECT
+            r.*,
+            rp.game,
+            rp.join_cost,
+            (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as members_count
         FROM rooms r
         JOIN room_pattern rp ON rp.id = r.room_pattern_id
         WHERE r.status IN ('waiting', 'lobby', 'shop', 'running')
