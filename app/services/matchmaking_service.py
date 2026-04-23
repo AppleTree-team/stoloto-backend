@@ -8,6 +8,11 @@ def find_room_for_user(game: str, min_cost: int, max_cost: int) -> dict:
 
     room = get_room_by_pattern(pattern["id"])
     if not room:
-        room = create_room(pattern["id"])
+        created = create_room(pattern["id"])
+        if not created.get("success"):
+            return {"success": False, "message": created.get("message", "Room not created")}
+        room = created.get("room")
+        if not room:
+            return {"success": False, "message": "Room not created"}
 
     return {"success": True, "room": room}

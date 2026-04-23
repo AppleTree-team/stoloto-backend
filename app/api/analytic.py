@@ -1,7 +1,16 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, HTTPException
 
 from app.api.deps import get_current_user_profile, require_session_payload, ensure_admin
-from app.services.analytic_service import get_game_popularity_with_dynamics, get_bots_status
+from app.services.analytic_service import (
+    get_game_popularity_with_dynamics,
+    get_bots_status,
+    get_top_patterns as get_top_patterns_service,
+    get_kpi as get_kpi_service,
+    get_funnel as get_funnel_service,
+    get_revenue_series as get_revenue_series_service,
+    get_top_players as get_top_players_service,
+    get_top_rooms as get_top_rooms_service,
+)
 from app.services.pattern_service import get_loss_warning_pattern_id
 
 router = APIRouter(prefix="/analytic", tags=["Analytic"])
@@ -33,6 +42,8 @@ def get_game_popularity(
     games = get_game_popularity_with_dynamics()
     return games
 
+
+
 @router.get("/patterns-top")
 def get_top_patterns(
     profile: dict = Depends(get_current_user_profile),
@@ -58,42 +69,64 @@ def get_top_patterns(
         - 403: Доступ запрещён (не администратор)
     """
     ensure_admin(profile)
-    paterns = get_top_patterns()
-    return paterns
+    patterns = get_top_patterns_service(limit=10)
+    return patterns
 
-@router.get("/loss-warning")
-def get_loss_warning(
+
+@router.get("/kpi")
+def get_kpi(
+    days: int = Query(7, ge=1, le=365),
     profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
-    """
-    Получить ID паттерна, который убыточен 7 дней подряд (если есть).
-
-    **Требования:** права администратора.
-
-    Возвращает:
-        - 200: { "pattern_id": 5 }  // если есть убыточный паттерн
-        - 401: Неавторизован
-        - 403: Доступ запрещён (не администратор)
-    """
     ensure_admin(profile)
-    pattern_id = get_loss_warning_pattern_id()
-    return {"pattern_id": pattern_id}
+    return get_kpi_service(days=days)
 
-@router.get("/bots-status")
-def get_bots_status_endpoint(
+
+@router.get("/funnel")
+def get_funnel(
+    days: int = Query(7, ge=1, le=365),
     profile: dict = Depends(get_current_user_profile),
     _payload: dict = Depends(require_session_payload),
 ):
-    """
-    Получить статус ботов: количество активных и общее количество.
-
-    **Требования:** права администратора.
-
-    Возвращает:
-        - 200: { "active_bots": 87, "total_bots": 100 }
-        - 401: Неавторизован
-        - 403: Доступ запрещён (не администратор)
-    """
     ensure_admin(profile)
-    return get_bots_status()
+    return get_funnel_service(days=days)
+
+
+@router.get("/revenue-series")
+def get_revenue_series(
+    days: int = Query(30, ge=1, le=365),
+    bucket: str = Query("day", description="day | hour"),
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
+):
+    ensure_admin(profile)
+    if bucket not in ("day", "hour"):
+        raise HTTPException(status_code=400, detail="bucket must be 'day' or 'hour'")
+    return get_revenue_series_service(days=days, bucket=bucket)  # type: ignore[arg-type]
+
+
+@router.get("/top-players")
+def get_top_players(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=200),
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
+):
+    ensure_admin(profile)
+    return get_top_players_service(days=days, limit=limit)
+
+
+@router.get("/top-rooms")
+def get_top_rooms(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=200),
+    profile: dict = Depends(get_current_user_profile),
+    _payload: dict = Depends(require_session_payload),
+):
+    ensure_admin(profile)
+    return get_top_rooms_service(days=days, limit=limit)
+
+
+
+

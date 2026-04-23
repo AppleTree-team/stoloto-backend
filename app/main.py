@@ -3,9 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 
-from app.api import auth, profile, patterns, room
+from app.api import auth, profile, patterns, room, analytic, admin
 from app.services.stage_manager import stage_manager
 from app.db.schema import ensure_schema
+
 
 import os
 from dotenv import load_dotenv
@@ -33,6 +34,10 @@ def create_app() -> FastAPI:
     main_router.include_router(profile.router, tags=["Profile"])
     main_router.include_router(patterns.router, tags=["Patterns"])
     main_router.include_router(room.router, tags=["Room"])
+    main_router.include_router(analytic.router, tags=["Analytic"])
+    main_router.include_router(admin.router, tags=["Admin"])
+
+
 
     @_app.get("/health")
     async def health_check():

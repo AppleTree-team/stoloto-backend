@@ -482,16 +482,17 @@ def start_game_if_shop(room_id: int) -> Dict[str, Any]:
             FOR UPDATE
         ),
         cfg AS (
-            SELECT casino_balance::bigint AS casino_balance
+            SELECT casino_balance::bigint AS casino_balance,
+                   COALESCE(bots_enabled, TRUE) AS bots_enabled
             FROM system_config
             WHERE id = 1
             FOR UPDATE
         ),
         cfg_row AS (
-            SELECT casino_balance
+            SELECT casino_balance, bots_enabled
             FROM cfg
             UNION ALL
-            SELECT 0::bigint AS casino_balance
+            SELECT 0::bigint AS casino_balance, TRUE AS bots_enabled
             WHERE NOT EXISTS (SELECT 1 FROM cfg)
         ),
         counts AS (
@@ -509,7 +510,11 @@ def start_game_if_shop(room_id: int) -> Dict[str, Any]:
                 GREATEST(0, COALESCE(rd.max_members_count, 0) - c.members_count)::int AS free_slots,
                 LEAST(
                     GREATEST(0, COALESCE(rd.max_members_count, 0) - c.members_count)::bigint,
-                    CASE WHEN COALESCE(rd.join_cost, 0) > 0 THEN (cfg.casino_balance / rd.join_cost) ELSE 0 END
+                    CASE
+                        WHEN NOT cfg.bots_enabled THEN 0
+                        WHEN COALESCE(rd.join_cost, 0) > 0 THEN (cfg.casino_balance / rd.join_cost)
+                        ELSE 0
+                    END
                 )::int AS fill_slots
             FROM anchor a
             LEFT JOIN room_data rd ON TRUE
@@ -1155,19 +1160,95 @@ def get_user_slots_in_room(room_id: int, user_id: int) -> List[Dict]:
 # =========================================================
 
 def create_room(pattern_id: int) -> Dict:
-    """Создаёт новую комнату со статусом 'waiting' и уникальным токеном."""
+    """Создаёт новую комнату (waiting), но уважает лимиты system_config.max_active_rooms и room_pattern.max_rooms_count."""
     token = generate_access_token()
-    room = execute_with_returning("""
-        INSERT INTO rooms (room_pattern_id, access_token, status)
-        VALUES (%s, %s, 'waiting')
-        RETURNING *
-    """, (pattern_id, token))
-    pattern = fetch_one("""
-        SELECT game, join_cost, max_members_count 
-        FROM room_pattern WHERE id = %s
-    """, (pattern_id,))
-    room.update(pattern)
-    return room
+    row = execute_with_returning("""
+        WITH locked AS (
+            SELECT pg_advisory_xact_lock(1, 3)
+        ),
+        cfg AS (
+            SELECT COALESCE(max_active_rooms, 50)::int AS max_active_rooms
+            FROM system_config
+            WHERE id = 1
+            FOR UPDATE
+        ),
+        cfg_row AS (
+            SELECT max_active_rooms
+            FROM cfg
+            UNION ALL
+            SELECT 50::int AS max_active_rooms
+            WHERE NOT EXISTS (SELECT 1 FROM cfg)
+        ),
+        pat AS (
+            SELECT
+                rp.max_rooms_count::int AS max_rooms_count,
+                rp.game,
+                rp.join_cost,
+                rp.max_members_count
+            FROM room_pattern rp
+            WHERE rp.id = %s
+            FOR UPDATE
+        ),
+        active_all AS (
+            SELECT COUNT(*)::int AS active_rooms_before
+            FROM rooms
+            WHERE status IN ('waiting', 'lobby', 'shop', 'running')
+        ),
+        active_pat AS (
+            SELECT COUNT(*)::int AS active_pattern_rooms_before
+            FROM rooms
+            WHERE room_pattern_id = %s
+              AND status IN ('waiting', 'lobby', 'shop', 'running')
+        ),
+        ins AS (
+            INSERT INTO rooms (room_pattern_id, access_token, status)
+            SELECT %s, %s, 'waiting'
+            WHERE (SELECT active_rooms_before FROM active_all) < (SELECT max_active_rooms FROM cfg_row)
+              AND (SELECT active_pattern_rooms_before FROM active_pat) < (SELECT max_rooms_count FROM pat)
+            RETURNING *
+        )
+        SELECT
+            (SELECT id FROM ins) AS id,
+            (SELECT room_pattern_id FROM ins) AS room_pattern_id,
+            (SELECT created_at FROM ins) AS created_at,
+            (SELECT started_at FROM ins) AS started_at,
+            (SELECT ended_at FROM ins) AS ended_at,
+            (SELECT status FROM ins) AS status,
+            (SELECT winner_id FROM ins) AS winner_id,
+            (SELECT access_token FROM ins) AS access_token,
+            (SELECT game FROM pat) AS game,
+            (SELECT join_cost FROM pat) AS join_cost,
+            (SELECT max_members_count FROM pat) AS max_members_count,
+            (SELECT active_rooms_before FROM active_all) AS active_rooms_before,
+            (SELECT max_active_rooms FROM cfg_row) AS max_active_rooms,
+            (SELECT active_pattern_rooms_before FROM active_pat) AS active_pattern_rooms_before,
+            (SELECT max_rooms_count FROM pat) AS max_rooms_count
+    """, (int(pattern_id), int(pattern_id), int(pattern_id), token))
+
+    if not row:
+        return {"success": False, "message": "Pattern not found"}
+
+    if not row.get("id"):
+        if int(row.get("active_rooms_before") or 0) >= int(row.get("max_active_rooms") or 0):
+            return {"success": False, "message": "Rooms limit reached", **row}
+        if int(row.get("active_pattern_rooms_before") or 0) >= int(row.get("max_rooms_count") or 0):
+            return {"success": False, "message": "Pattern rooms limit reached", **row}
+        return {"success": False, "message": "Room not created", **row}
+
+    room = {
+        "id": row["id"],
+        "room_pattern_id": row["room_pattern_id"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "status": row["status"],
+        "winner_id": row["winner_id"],
+        "access_token": row["access_token"],
+        "game": row.get("game"),
+        "join_cost": row.get("join_cost"),
+        "max_members_count": row.get("max_members_count"),
+    }
+    return {"success": True, "room": room}
 
 
 

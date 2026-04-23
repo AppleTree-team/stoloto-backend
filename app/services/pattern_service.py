@@ -4,6 +4,36 @@ from app.db.db import fetch_one, fetch_all, execute, execute_with_returning
 
 
 def _validate_pattern_payload(data: Dict[str, Any]) -> None:
+    cfg = fetch_one("""
+        SELECT
+            COALESCE(min_join_cost, 0)::bigint AS min_join_cost,
+            COALESCE(max_join_cost, 1000000000)::bigint AS max_join_cost
+        FROM system_config
+        WHERE id = 1
+    """) or {"min_join_cost": 0, "max_join_cost": 1000000000}
+
+    if "join_cost" in data:
+        try:
+            join_cost = int(data.get("join_cost"))
+        except (TypeError, ValueError):
+            raise ValueError("join_cost must be an integer")
+
+        if join_cost <= 0:
+            raise ValueError("join_cost must be > 0")
+
+        min_join_cost = int(cfg.get("min_join_cost") or 0)
+        max_join_cost = int(cfg.get("max_join_cost") or 1000000000)
+        if join_cost < min_join_cost or join_cost > max_join_cost:
+            raise ValueError(f"join_cost must be between {min_join_cost} and {max_join_cost}")
+
+    if "rank" in data:
+        try:
+            rank = float(data.get("rank"))
+        except (TypeError, ValueError):
+            raise ValueError("rank must be a number")
+        if rank < 0 or rank > 100:
+            raise ValueError("rank must be between 0 and 100")
+
     try:
         weight = float(data.get("weight"))
     except (TypeError, ValueError):

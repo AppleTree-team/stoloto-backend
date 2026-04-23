@@ -18,6 +18,18 @@ _DDL: Iterable[str] = (
     ADD COLUMN IF NOT EXISTS casino_balance BIGINT NOT NULL DEFAULT 0 CHECK (casino_balance >= 0)
     """,
     """
+    ALTER TABLE system_config
+    ADD COLUMN IF NOT EXISTS bots_enabled BOOLEAN NOT NULL DEFAULT TRUE
+    """,
+    """
+    ALTER TABLE system_config
+    ADD COLUMN IF NOT EXISTS min_join_cost BIGINT NOT NULL DEFAULT 1 CHECK (min_join_cost >= 0)
+    """,
+    """
+    ALTER TABLE system_config
+    ADD COLUMN IF NOT EXISTS max_join_cost BIGINT NOT NULL DEFAULT 1000000000 CHECK (max_join_cost >= 0)
+    """,
+    """
     ALTER TABLE room_pattern
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP
     """,
@@ -99,8 +111,8 @@ _DDL: Iterable[str] = (
     )
     """,
     """
-    INSERT INTO system_config (id, max_active_rooms, casino_balance)
-    VALUES (1, 50, 0)
+    INSERT INTO system_config (id, max_active_rooms, casino_balance, bots_enabled, min_join_cost, max_join_cost)
+    VALUES (1, 50, 0, TRUE, 1, 1000000000)
     ON CONFLICT (id) DO NOTHING
     """,
     """

@@ -2,7 +2,10 @@
 CREATE TABLE system_config (
     id INTEGER PRIMARY KEY DEFAULT 1,
     max_active_rooms INTEGER NOT NULL DEFAULT 50 CHECK (max_active_rooms >= 0),
-    casino_balance BIGINT NOT NULL DEFAULT 999999999 CHECK (casino_balance >= 0)
+    casino_balance BIGINT NOT NULL DEFAULT 999999999 CHECK (casino_balance >= 0),
+    bots_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    min_join_cost BIGINT NOT NULL DEFAULT 1 CHECK (min_join_cost >= 0),
+    max_join_cost BIGINT NOT NULL DEFAULT 1000000000 CHECK (max_join_cost >= 0)
 );
 
 CREATE TABLE users (
@@ -38,8 +41,9 @@ CREATE TABLE room_pattern (
     winner_payout_percent INTEGER NOT NULL DEFAULT 100 CHECK (winner_payout_percent BETWEEN 0 AND 100)
 );
 
+--Вставляем запись в конфигурацию казино
 INSERT INTO system_config (id, max_active_rooms, casino_balance)
-VALUES (1, 50, 0)
+VALUES (1, 50, 999999999)
 ON CONFLICT (id) DO NOTHING;
 
 
